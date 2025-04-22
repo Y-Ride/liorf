@@ -15,7 +15,7 @@ def generate_launch_description():
     params_declare = DeclareLaunchArgument(
         'params_file',
         default_value=os.path.join(
-            share_dir, 'config', 'lio_sam_ouster.yaml'),
+            share_dir, 'config', 'liorf_ouster.yaml'),
         description='FPath to the ROS2 parameters file to use.')
 
     return LaunchDescription([
