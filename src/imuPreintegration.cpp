@@ -486,6 +486,12 @@ public:
 
     void imuHandler(const sensor_msgs::msg::Imu::SharedPtr imu_raw)
     {
+        static bool firstPass = true;
+        if (firstPass) {
+            RCLCPP_INFO(rclcpp::get_logger("imuPreintegration"), "Got first IMU message from topic: %s", imuTopic.c_str());
+            firstPass = false;
+        }
+        
         std::lock_guard<std::mutex> lock(mtx);
 
         sensor_msgs::msg::Imu thisImu = imuConverter(*imu_raw);

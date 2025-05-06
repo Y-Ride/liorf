@@ -66,6 +66,10 @@ typedef pcl::PointXYZI PointType;
 std::shared_ptr<CommonLib::common_lib> common_lib_;
 
 enum class SensorType { VELODYNE, OUSTER, LIVOX, ROBOSENSE, MULRAN};
+enum class GpsTopicType { 
+    SENSOR_MSGS_NAVSATFIX,
+    NAV_MSGS_ODOMETRY
+};
 
 class ParamServer : public rclcpp::Node
 {
@@ -80,6 +84,7 @@ public:
     string imuTopic;
     string odomTopic;
     string gpsTopic;
+    GpsTopicType gpsTopicType;
 
     //Frames
     string lidarFrame;
@@ -92,6 +97,12 @@ public:
     bool useGpsElevation;
     float gpsCovThreshold;
     float poseCovThreshold;
+    struct {
+        float lat;
+        float lon;
+        float alt;
+        bool useRef;
+    } gpsRef;
 
     // Save pcd
     bool savePCD;
@@ -171,6 +182,25 @@ public:
         declare_parameter<string>("gpsTopic", "/odometry/gps");
         get_parameter("gpsTopic", gpsTopic);
 
+        int gpsTopicInt;
+        declare_parameter<int>("gpsTopicType", -1);
+        get_parameter("gpsTopicType", gpsTopicInt);
+        if (gpsTopicInt == 0)
+        {
+            gpsTopicType = GpsTopicType::SENSOR_MSGS_NAVSATFIX;
+        }
+        else if (gpsTopicInt == 1)
+        {
+            gpsTopicType = GpsTopicType::NAV_MSGS_ODOMETRY;
+        }
+        else
+        {
+            RCLCPP_ERROR_STREAM(
+                get_logger(),
+                "Invalid gps topic type (must be either 0 -> 'sensor_msgs/NavSatFix' or 1 -> 'nav_msgs/Odometry'): " << gpsTopicInt);
+            rclcpp::shutdown();
+        }
+
         declare_parameter<string>("lidarFrame", "base_link");
         get_parameter("lidarFrame", lidarFrame);
         declare_parameter<string>("baselinkFrame", "base_link");
@@ -179,7 +209,7 @@ public:
         get_parameter("odometryFrame", odometryFrame);
         declare_parameter<string>("mapFrame", "map");
         get_parameter("mapFrame", mapFrame);
-
+        
         declare_parameter<bool>("useImuHeadingInitialization", false);
         get_parameter("useImuHeadingInitialization", useImuHeadingInitialization);
         declare_parameter<bool>("useGpsElevation", false);
@@ -188,6 +218,25 @@ public:
         get_parameter("gpsCovThreshold", gpsCovThreshold);
         declare_parameter<float>("poseCovThreshold", 25.0f);
         get_parameter("poseCovThreshold", poseCovThreshold);
+
+        // Declare the nested parameters with default values
+        declare_parameter<double>("gpsRef.latitude", 0.0);
+        declare_parameter<double>("gpsRef.longitude", 0.0);
+        declare_parameter<double>("gpsRef.altitude", 0.0);
+        declare_parameter<bool>("gpsRef.useRef", false);
+
+        // Get the values of the nested parameters
+        get_parameter("gpsRef.latitude", gpsRef.lat);
+        get_parameter("gpsRef.longitude", gpsRef.lon);
+        get_parameter("gpsRef.altitude", gpsRef.alt);
+        get_parameter("gpsRef.useRef", gpsRef.useRef);
+
+        // gpsRef.lon_provided = has_parameter("gpsRef.longitude");
+        // gpsRef.alt_provided = has_parameter("gpsRef.altitude");
+        RCLCPP_INFO(get_logger(), "\033[1;32mGPS Ref received status: %slat: %0.2f, lon: %0.2f, alt: %0.2f\033[0m",
+            gpsRef.useRef ? "\033[1;32m" : "\033[1;33m",
+            gpsRef.lat, gpsRef.lon, gpsRef.alt);
+
 
         declare_parameter<bool>("savePCD", false);
         get_parameter("savePCD", savePCD);

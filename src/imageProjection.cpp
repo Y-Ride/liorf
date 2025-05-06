@@ -194,6 +194,11 @@ public:
 
     void cloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg)
     {
+        static bool firstPass = true;
+        if (firstPass) {
+            RCLCPP_INFO(get_logger(), "Got first point cloud message from topic: %s", pointCloudTopic.c_str());
+            firstPass = false;
+        }
         if (!cachePointCloud(laserCloudMsg))
             return;
 

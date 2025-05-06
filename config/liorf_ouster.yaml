@@ -2,10 +2,12 @@
   ros__parameters:
     # Topics
     pointCloudTopic: "/ouster_top/points"               # Point cloud data
-    imuTopic: "/ouster_top/imu"                         # IMU data
-    # imuTopic: "/inertial_sense/imu_raw"                         # IMU data
+    # imuTopic: "/ouster_top/imu"                         # IMU data
+    # imuTopic: "/inertial_sense/imu_raw"                   # IMU data 6-axis, 500 Hz
+    imuTopic: "/inertial_sense/imu"                         # IMU data 9-axis, 71.42857 Hz
     odomTopic: "odometry/imu"                   # IMU pre-preintegration odometry, same frequency as IMU
-    gpsTopic: "odometry/gpsz"                   # GPS odometry topic from navsat, see module_navsat.launch file
+    gpsTopic: "/inertial_sense/gps1/NavSatFix"                   # GPS odometry topic from navsat, see module_navsat.launch file
+    gpsTopicType: 0                           # 0: sensor_msgs::msg::NavSatFix, 1: nav_msgs::msg::Odometry
 
     # Frames
     lidarFrame: "os_lidar_top"
@@ -18,6 +20,11 @@
     useGpsElevation: false                      # if GPS elevation is bad, set to "false"
     gpsCovThreshold: 2.0                        # m^2, threshold for using GPS data
     poseCovThreshold: 25.0                      # m^2, threshold for using GPS data
+    gpsRef:                                     # GPS reference infront of the EB lat: 40.246266148, lon: -111.648571401, alt: 1403.8386
+      useRef: true
+      latitude: 40.246266148
+      longitude: -111.648571401
+      altitude: 1403.8386
     
     # Export settings
     savePCD: true                              # https://github.com/TixiaoShan/LIO-SAM/issues/3
@@ -34,7 +41,7 @@
 
     # IMU Settings
     imuType: 0                                  # 0: 6-axis  1: 9-axis
-    imuRate: 100.0
+    imuRate: 71.42857                              # 100.0 - /ouster/imu, 500.0 - /inertial_sense/imu_raw, 71.42857 (1/14ms) - /inertial_sense/imu
     imuAccNoise: 3.9939570888238808e-03
     imuGyrNoise: 1.5636343949698187e-03
     imuAccBiasN: 6.4356659353532566e-05
@@ -45,14 +52,14 @@
     # Extrinsics: T_lb (lidar -> imu)
     # extrinsicTrans: [0.0, 0.0, 0.0]
     extrinsicTrans:  [-0.937882, 0.202898, -1.5748]
-    extrinsicRot: [1.0, 0.0, 0.0,
+    extrinsicRot: [-1.0, 0.0, 0.0,
                    0.0, 1.0, 0.0,
-                   0.0, 0.0, 1.0]
+                   0.0, 0.0, -1.0]
 
     # This parameter is set only when the 9-axis IMU is used, but it must be a high-precision IMU. e.g. MTI-680
-    extrinsicRPY: [1.0, 0.0, 0.0,
+    extrinsicRPY: [-1.0, 0.0, 0.0,
                     0.0, 1.0, 0.0,
-                    0.0, 0.0, 1.0]
+                    0.0, 0.0, -1.0]
 
     # voxel filter paprams
     mappingSurfLeafSize: 0.4                      # default: 0.4 - outdoor, 0.2 - indoor

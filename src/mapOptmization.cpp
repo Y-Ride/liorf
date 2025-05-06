@@ -72,7 +72,8 @@ public:
     Eigen::MatrixXd poseCovariance;
 
     rclcpp::Subscription<liorf::msg::CloudInfo>::SharedPtr subCloud;
-    rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr subGPS;
+    rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr subGPSNavSatFix;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subGPSOdometry;
     rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr subLoop;
 
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudSurround;
@@ -169,8 +170,16 @@ public:
 
         subCloud = create_subscription<liorf::msg::CloudInfo>("liorf/deskew/cloud_info", QosPolicy(history_policy, reliability_policy),
                     std::bind(&mapOptimization::laserCloudInfoHandler, this, std::placeholders::_1));
-        subGPS = create_subscription<sensor_msgs::msg::NavSatFix>(gpsTopic, QosPolicy(history_policy, reliability_policy),
-                    std::bind(&mapOptimization::gpsHandler, this, std::placeholders::_1));
+        if (gpsTopicType == GpsTopicType::SENSOR_MSGS_NAVSATFIX)
+        {
+            subGPSNavSatFix = create_subscription<sensor_msgs::msg::NavSatFix>(gpsTopic, QosPolicy(history_policy, reliability_policy),
+                        std::bind(&mapOptimization::gpsHandlerNavSatFix, this, std::placeholders::_1));
+        }
+        else if (gpsTopicType == GpsTopicType::NAV_MSGS_ODOMETRY)
+        {
+            subGPSOdometry = create_subscription<nav_msgs::msg::Odometry>(gpsTopic, QosPolicy(history_policy, reliability_policy),
+                        std::bind(&mapOptimization::gpsHandlerOdometry, this, std::placeholders::_1));
+        }
         subLoop = create_subscription<std_msgs::msg::Float64MultiArray>("lio_loop/loop_closure_detection", QosPolicy(history_policy, reliability_policy),
                     std::bind(&mapOptimization::loopInfoHandler, this, std::placeholders::_1));
 
@@ -276,16 +285,44 @@ public:
         }
     }
 
-    void gpsHandler(const sensor_msgs::msg::NavSatFix::SharedPtr gpsMsg)
+    void gpsHandlerOdometry(const nav_msgs::msg::Odometry::SharedPtr gpsMsg)
     {
-        if (gpsMsg->status.status != 0)
+        static bool firstPass = true;
+        if (firstPass){
+            firstPass = false;
+            RCLCPP_INFO(rclcpp::get_logger("mapOptimization"), "Got first GPS message from topic: %s", gpsTopic.c_str());
+        }
+
+        gpsQueue.push_back(*gpsMsg);
+
+    }
+
+    void gpsHandlerNavSatFix(const sensor_msgs::msg::NavSatFix::SharedPtr gpsMsg)
+    {
+        static bool firstPass = true;
+        if (firstPass){
+            firstPass = false;
+            RCLCPP_INFO(rclcpp::get_logger("mapOptimization"), "Got first GPS message from topic: %s", gpsTopic.c_str());
+        }
+        
+        if (gpsMsg->status.status < 0) {
+            RCLCPP_WARN(rclcpp::get_logger("mapOptimization"), "GPS signal is invalid");
             return;
+        }
 
         Eigen::Vector3d trans_local_;
         static bool first_gps = false;
         if (!first_gps) {
             first_gps = true;
-            gps_trans_.Reset(gpsMsg->latitude, gpsMsg->longitude, gpsMsg->altitude);
+            RCLCPP_INFO(rclcpp::get_logger("mapOptimization"), "GPS using altitude: %s\033[0m", useGpsElevation ? "\033[32mtrue" : "\033[33mfalse");
+            if (gpsRef.useRef){
+                gps_trans_.Reset(gpsRef.lat, gpsRef.lon, gpsRef.alt);
+                RCLCPP_INFO(rclcpp::get_logger("mapOptimization"), "GPS reference at: %f, %f, %f", gpsRef.lat, gpsRef.lon, gpsRef.alt);
+            }
+            else {
+                gps_trans_.Reset(gpsMsg->latitude, gpsMsg->longitude, gpsMsg->altitude);
+                RCLCPP_INFO(rclcpp::get_logger("mapOptimization"), "GPS initialized at robot origin: %f, %f, %f", gpsMsg->latitude, gpsMsg->longitude, gpsMsg->altitude);
+            }
         }
 
         gps_trans_.Forward(gpsMsg->latitude, gpsMsg->longitude, gpsMsg->altitude, trans_local_[0], trans_local_[1], trans_local_[2]);
