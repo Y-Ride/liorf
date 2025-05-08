@@ -8,6 +8,8 @@
     odomTopic: "odometry/imu"                   # IMU pre-preintegration odometry, same frequency as IMU
     gpsTopic: "/inertial_sense/gps1/NavSatFix"                   # GPS odometry topic from navsat, see module_navsat.launch file
     gpsTopicType: 0                           # 0: sensor_msgs::msg::NavSatFix, 1: nav_msgs::msg::Odometry
+    # gpsTopic: "/inertial_sense/odom_ins_ned"
+    # gpsTopicType: 1
 
     # Frames
     lidarFrame: "os_lidar_top"
@@ -27,7 +29,7 @@
       altitude: 1403.8386
     
     # Export settings
-    savePCD: true                              # https://github.com/TixiaoShan/LIO-SAM/issues/3
+    savePCD: false                              # https://github.com/TixiaoShan/LIO-SAM/issues/3
     savePCDDirectory: "/Downloads/LOAM/"        # in your home folder, starts and ends with "/". Warning: the code deletes "LOAM" folder then recreates it. See "mapOptimization" for implementation
 
     # Sensor Settings
