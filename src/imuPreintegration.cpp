@@ -493,7 +493,15 @@ public:
         }
         
         std::lock_guard<std::mutex> lock(mtx);
-
+        // RCLCPP_INFO(rclcpp::get_logger("imuPreintegration"), "Before offset %d", imu_raw->header.stamp.nanosec);
+        // double before_offset = imu_raw->header.stamp.sec + imu_raw->header.stamp.nanosec * 1e-9;
+        // double after_offset = before_offset - 0.029;
+        // int32_t secs = static_cast<int32_t>(after_offset);
+        // uint32_t nsecs = static_cast<uint32_t>((after_offset - secs) * 1e9);
+        
+        // imu_raw->header.stamp.sec = secs;
+        // imu_raw->header.stamp.nanosec = nsecs;
+        // RCLCPP_INFO(rclcpp::get_logger("imuPreintegration"), "After offset %d", imu_raw->header.stamp.nanosec);
         sensor_msgs::msg::Imu thisImu = imuConverter(*imu_raw);
 
         imuQueOpt.push_back(thisImu);

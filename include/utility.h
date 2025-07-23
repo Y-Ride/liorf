@@ -193,12 +193,16 @@ public:
         {
             gpsTopicType = GpsTopicType::NAV_MSGS_ODOMETRY;
         }
+        else if (gpsTopicInt == -1) // Not using GPS
+        {
+            // Do nothing
+        }
         else
         {
-            RCLCPP_ERROR_STREAM(
+            RCLCPP_WARN(
                 get_logger(),
-                "Invalid gps topic type (must be either 0 -> 'sensor_msgs/NavSatFix' or 1 -> 'nav_msgs/Odometry'): " << gpsTopicInt);
-            rclcpp::shutdown();
+                "Invalid gps topic type (must be either -1 -> no GPS, 0 -> 'sensor_msgs/NavSatFix', or 1 -> 'nav_msgs/Odometry') to use GPS");
+            // rclcpp::shutdown();
         }
 
         declare_parameter<string>("lidarFrame", "base_link");

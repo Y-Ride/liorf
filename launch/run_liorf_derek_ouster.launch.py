@@ -10,12 +10,12 @@ def generate_launch_description():
 
     share_dir = get_package_share_directory('liorf')
     parameter_file = LaunchConfiguration('params_file')
-    rviz_config_file = os.path.join(share_dir, 'rviz', 'mapping.rviz')
+    rviz_config_file = os.path.join(share_dir, 'rviz', 'mapping_basic.rviz')
 
     params_declare = DeclareLaunchArgument(
         'params_file',
         default_value=os.path.join(
-            share_dir, 'config', 'liorf_ouster.yaml'),
+            share_dir, 'config', 'liorf_derek_ouster.yaml'),
         description='FPath to the ROS2 parameters file to use.')
 
     return LaunchDescription([

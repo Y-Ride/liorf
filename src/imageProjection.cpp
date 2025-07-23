@@ -163,6 +163,13 @@ public:
 
     void imuHandler(const sensor_msgs::msg::Imu::SharedPtr imuMsg)
     {
+        // double before_offset = imuMsg->header.stamp.sec + imuMsg->header.stamp.nanosec * 1e-9;
+        // double after_offset = before_offset - 0.029;
+        // int32_t secs = static_cast<int32_t>(after_offset);
+        // uint32_t nsecs = static_cast<uint32_t>((after_offset - secs) * 1e9);
+        
+        // imuMsg->header.stamp.sec = secs;
+        // imuMsg->header.stamp.nanosec = nsecs;
         sensor_msgs::msg::Imu thisImu = imuConverter(*imuMsg);
 
         std::lock_guard<std::mutex> lock1(imuLock);

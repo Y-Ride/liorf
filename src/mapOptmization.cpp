@@ -306,7 +306,7 @@ public:
         }
         
         if (gpsMsg->status.status < 0) {
-            RCLCPP_WARN(rclcpp::get_logger("mapOptimization"), "GPS signal is invalid");
+            RCLCPP_WARN(rclcpp::get_logger("mapOptimization"), "No GPS FIX");
             return;
         }
 
