@@ -33,7 +33,7 @@ def generate_launch_description():
             executable='static_transform_publisher',
             name='sensor2lidar',
             arguments=[
-                '0', '0', '36.18',
+                '0', '0', '0.03618',
                 '0', '0', '1', '0',
                 'os_sensor',
                 'os_lidar'
