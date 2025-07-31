@@ -54,13 +54,13 @@ public:
 
         if(lidarFrame != baselinkFrame)
         {
-            rclcpp::sleep_for(std::chrono::seconds(2));  // Wait for 2 seconds
+            rclcpp::sleep_for(std::chrono::milliseconds(10));  // Wait for 2 seconds
             try
             {
                 tf2::fromMsg(tfBuffer->lookupTransform(
                     lidarFrame, baselinkFrame, rclcpp::Time(0)), lidar2Baselink);
             }
-            catch (tf2::TransformException ex)
+            catch (tf2::TransformException &ex)
             {
                 RCLCPP_ERROR(get_logger(), "%s", ex.what());
             }
