@@ -54,6 +54,7 @@ public:
 
         if(lidarFrame != baselinkFrame)
         {
+            rclcpp::sleep_for(std::chrono::seconds(2));  // Wait for 2 seconds
             try
             {
                 tf2::fromMsg(tfBuffer->lookupTransform(
