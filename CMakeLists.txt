@@ -101,6 +101,10 @@ install(
   DESTINATION include
 )
 
+# # Testing BlockMaps
+# add_executable(test_blockmaps src/testc++.cpp)
+# ament_target_dependencies(test_blockmaps ${ros2_lib})
+
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights

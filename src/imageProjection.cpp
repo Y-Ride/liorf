@@ -298,18 +298,15 @@ public:
         timeScanCur = rclcpp::Time(cloudHeader.stamp).seconds();
         timeScanEnd = timeScanCur + laserCloudIn->points.back().time;
 
+        // remove Nan
+        vector<int> indices;
+        pcl::removeNaNFromPointCloud(*laserCloudIn, *laserCloudIn, indices);
+
         // check dense flag
         if (laserCloudIn->is_dense == false)
         {
-            // RCLCPP_ERROR_STREAM(get_logger(), "Point cloud is not in dense format, please remove NaN points first!");
-            // rclcpp::shutdown();
-
-            // Remove NaNs
-            // RCLCPP_INFO(this->get_logger(), "Point cloud is not in dense format, removing NaN points");
-            pcl::PointCloud<VelodynePointXYZIRT>::Ptr tmpCloud(new pcl::PointCloud<VelodynePointXYZIRT>);
-            std::vector<int> indices;
-            pcl::removeNaNFromPointCloud(*laserCloudIn, *tmpCloud, indices);
-            laserCloudIn = tmpCloud;
+            RCLCPP_ERROR(get_logger(), "Point cloud is not in dense format, please remove NaN points first!");
+            rclcpp::shutdown();
         }
 
         // check ring channel

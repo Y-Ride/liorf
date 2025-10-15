@@ -35,8 +35,8 @@ def generate_launch_description():
             arguments=[
                 '0', '0', '0.03618',
                 '0', '0', '1', '0',
-                'os_sensor',
-                'os_lidar'
+                'os_sensor_top',
+                'os_lidar_top'
             ],
             output='screen'
         ),

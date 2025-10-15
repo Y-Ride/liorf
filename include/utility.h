@@ -57,8 +57,15 @@
 #include <array>
 #include <thread>
 #include <mutex>
+#include <unordered_map>
+#include <filesystem>
+
+#define UTILITY_SET_PARAM(TYPE, NAME, DEFAULT, VAR) \
+    declare_parameter<TYPE>(NAME, DEFAULT); \
+    get_parameter(NAME, VAR);
 
 using namespace std;
+namespace fs = std::filesystem;
 
 typedef pcl::PointXYZI PointType;
 
@@ -166,25 +173,29 @@ public:
     float globalMapVisualizationPoseDensity;
     float globalMapVisualizationLeafSize;
 
+    // Mapping
+    bool saveRawPointClouds;
+
+    // Block Maps
+    struct {
+      bool save;
+      bool saveGlobal;
+      bool debug;
+      int  width;
+    } blockMapParam;
+
     ParamServer(std::string node_name, const rclcpp::NodeOptions & options) : Node(node_name, options)
     {   
-        declare_parameter<string>("history_policy", "history_keep_last");
-        get_parameter("history_policy", history_policy);
-        declare_parameter<string>("reliability_policy", "reliability_reliable");
-        get_parameter("reliability_policy", reliability_policy);
+        UTILITY_SET_PARAM(string, "history_policy", "history_keep_last", history_policy);
+        UTILITY_SET_PARAM(string, "reliability_policy", "reliability_reliable", reliability_policy);
 
-        declare_parameter<string>("pointCloudTopic", "/points_raw");
-        get_parameter("pointCloudTopic", pointCloudTopic);
-        declare_parameter<string>("imuTopic", "/imu_correct");
-        get_parameter("imuTopic", imuTopic);
-        declare_parameter<string>("odomTopic", "/odometry/imu");
-        get_parameter("odomTopic", odomTopic);
-        declare_parameter<string>("gpsTopic", "/odometry/gps");
-        get_parameter("gpsTopic", gpsTopic);
+        UTILITY_SET_PARAM(string, "pointCloudTopic", "/points_raw", pointCloudTopic);
+        UTILITY_SET_PARAM(string, "imuTopic", "/imu_correct", imuTopic);
+        UTILITY_SET_PARAM(string, "odomTopic", "/odometry/imu", odomTopic);
+        UTILITY_SET_PARAM(string, "gpsTopic", "/odometry/gps", gpsTopic);
 
         int gpsTopicInt;
-        declare_parameter<int>("gpsTopicType", -1);
-        get_parameter("gpsTopicType", gpsTopicInt);
+        UTILITY_SET_PARAM(int, "gpsTopicType", -1, gpsTopicInt);
         if (gpsTopicInt == 0)
         {
             gpsTopicType = GpsTopicType::SENSOR_MSGS_NAVSATFIX;
@@ -199,57 +210,33 @@ public:
         }
         else
         {
-            RCLCPP_WARN(
+            RCLCPP_WARN_ONCE(
                 get_logger(),
                 "Invalid gps topic type (must be either -1 -> no GPS, 0 -> 'sensor_msgs/NavSatFix', or 1 -> 'nav_msgs/Odometry') to use GPS");
             // rclcpp::shutdown();
         }
 
-        declare_parameter<string>("lidarFrame", "base_link");
-        get_parameter("lidarFrame", lidarFrame);
-        declare_parameter<string>("baselinkFrame", "base_link");
-        get_parameter("baselinkFrame", baselinkFrame);
-        declare_parameter<string>("odometryFrame", "odom");
-        get_parameter("odometryFrame", odometryFrame);
-        declare_parameter<string>("mapFrame", "map");
-        get_parameter("mapFrame", mapFrame);
+        UTILITY_SET_PARAM(string, "lidarFrame", "base_link", lidarFrame);
+        UTILITY_SET_PARAM(string, "baselinkFrame", "base_link", baselinkFrame);
+        UTILITY_SET_PARAM(string, "odometryFrame", "odom", odometryFrame);
+        UTILITY_SET_PARAM(string, "mapFrame", "map", mapFrame);
         
-        declare_parameter<bool>("useImuHeadingInitialization", false);
-        get_parameter("useImuHeadingInitialization", useImuHeadingInitialization);
-        declare_parameter<bool>("useGpsElevation", false);
-        get_parameter("useGpsElevation", useGpsElevation);
-        declare_parameter<float>("gpsCovThreshold", 2.0f);
-        get_parameter("gpsCovThreshold", gpsCovThreshold);
-        declare_parameter<float>("poseCovThreshold", 25.0f);
-        get_parameter("poseCovThreshold", poseCovThreshold);
+        UTILITY_SET_PARAM(bool, "useImuHeadingInitialization", false, useImuHeadingInitialization);
+        UTILITY_SET_PARAM(bool, "useGpsElevation", false, useGpsElevation);
+        UTILITY_SET_PARAM(float, "gpsCovThreshold", 2.0f, gpsCovThreshold);
+        UTILITY_SET_PARAM(float, "poseCovThreshold", 25.0f, poseCovThreshold);
 
         // Declare the nested parameters with default values
-        declare_parameter<double>("gpsRef.latitude", 0.0);
-        declare_parameter<double>("gpsRef.longitude", 0.0);
-        declare_parameter<double>("gpsRef.altitude", 0.0);
-        declare_parameter<bool>("gpsRef.useRef", false);
+        UTILITY_SET_PARAM(double, "gpsRef.latitude", 0.0, gpsRef.lat);
+        UTILITY_SET_PARAM(double, "gpsRef.longitude", 0.0, gpsRef.lon);
+        UTILITY_SET_PARAM(double, "gpsRef.altitude", 0.0, gpsRef.alt);
+        UTILITY_SET_PARAM(bool, "gpsRef.useRef", false, gpsRef.useRef);
 
-        // Get the values of the nested parameters
-        get_parameter("gpsRef.latitude", gpsRef.lat);
-        get_parameter("gpsRef.longitude", gpsRef.lon);
-        get_parameter("gpsRef.altitude", gpsRef.alt);
-        get_parameter("gpsRef.useRef", gpsRef.useRef);
-
-        // gpsRef.lon_provided = has_parameter("gpsRef.longitude");
-        // gpsRef.alt_provided = has_parameter("gpsRef.altitude");
-        RCLCPP_INFO(get_logger(), "\033[1;32mGPS Ref received status: %slat: %0.2f, lon: %0.2f, alt: %0.2f\033[0m",
-            gpsRef.useRef ? "\033[1;32m" : "\033[1;33m",
-            gpsRef.lat, gpsRef.lon, gpsRef.alt);
-
-
-        declare_parameter<bool>("savePCD", false);
-        get_parameter("savePCD", savePCD);
-        declare_parameter<string>("savePCDDirectory", "/Downloads/LOAM/");
-        get_parameter("savePCDDirectory", savePCDDirectory);
+        UTILITY_SET_PARAM(bool, "savePCD", false, savePCD);
+        UTILITY_SET_PARAM(string, "savePCDDirectory", "/Downloads/LOAM/", savePCDDirectory);
 
         std::string sensorStr;
-        declare_parameter<string>("sensor", " ");
-        get_parameter("sensor", sensorStr);
+        UTILITY_SET_PARAM(string, "sensor", " ", sensorStr);
         if (sensorStr == "velodyne")
         {
             sensor = SensorType::VELODYNE;
@@ -275,101 +262,73 @@ public:
             rclcpp::shutdown();
         }
 
-        declare_parameter<int>("N_SCAN", 16);
-        get_parameter("N_SCAN", N_SCAN);
-        declare_parameter<int>("Horizon_SCAN", 1800);
-        get_parameter("Horizon_SCAN", Horizon_SCAN);
-        declare_parameter<int>("downsampleRate", 1);
-        get_parameter("downsampleRate", downsampleRate);
-        declare_parameter<int>("point_filter_num", 3);
-        get_parameter("point_filter_num", point_filter_num);
-        declare_parameter<float>("lidarMinRange", 1.0f);
-        get_parameter("lidarMinRange", lidarMinRange);
-        declare_parameter<float>("lidarMaxRange", 1000.0f);
-        get_parameter("lidarMaxRange", lidarMaxRange);
+        UTILITY_SET_PARAM(int, "N_SCAN", 16, N_SCAN);
+        UTILITY_SET_PARAM(int, "Horizon_SCAN", 1800, Horizon_SCAN);
+        UTILITY_SET_PARAM(int, "downsampleRate", 1, downsampleRate);
+        UTILITY_SET_PARAM(int, "point_filter_num", 3, point_filter_num);
+        UTILITY_SET_PARAM(float, "lidarMinRange", 1.0f, lidarMinRange);
+        UTILITY_SET_PARAM(float, "lidarMaxRange", 1000.0f, lidarMaxRange);
 
-        declare_parameter<int>("imuType", 0);
-        get_parameter("imuType", imuType);
-        declare_parameter<float>("imuRate", 500.0f);
-        get_parameter("imuRate", imuRate);
-        declare_parameter<float>("imuAccNoise", 0.01f);
-        get_parameter("imuAccNoise", imuAccNoise);
-        declare_parameter<float>("imuGyrNoise", 0.001f);
-        get_parameter("imuGyrNoise", imuGyrNoise);
-        declare_parameter<float>("imuAccBiasN", 0.0002f);
-        get_parameter("imuAccBiasN", imuAccBiasN);
-        declare_parameter<float>("imuGyrBiasN", 0.00003f);
-        get_parameter("imuGyrBiasN", imuGyrBiasN);
-        declare_parameter<float>("imuGravity", 9.80511f);
-        get_parameter("imuGravity", imuGravity);
-        declare_parameter<float>("imuRPYWeight", 0.01f);
-        get_parameter("imuRPYWeight", imuRPYWeight);
+        UTILITY_SET_PARAM(int, "imuType", 0, imuType);
+        UTILITY_SET_PARAM(float, "imuRate", 500.0f, imuRate);
+        UTILITY_SET_PARAM(float, "imuAccNoise", 0.01f, imuAccNoise);
+        UTILITY_SET_PARAM(float, "imuGyrNoise", 0.001f, imuGyrNoise);
+        UTILITY_SET_PARAM(float, "imuAccBiasN", 0.0002f, imuAccBiasN);
+        UTILITY_SET_PARAM(float, "imuGyrBiasN", 0.00003f, imuGyrBiasN);
+        UTILITY_SET_PARAM(float, "imuGravity", 9.80511f, imuGravity);
+        UTILITY_SET_PARAM(float, "imuRPYWeight", 0.01f, imuRPYWeight);
 
         double ida[] = { 1.0,  0.0,  0.0,
                          0.0,  1.0,  0.0,
                          0.0,  0.0,  1.0};
         std::vector < double > id(ida, std::end(ida));
-        declare_parameter("extrinsicRot", id);
-        get_parameter("extrinsicRot", extRotV);
-        declare_parameter("extrinsicRPY", id);
-        get_parameter("extrinsicRPY", extRPYV);
+        UTILITY_SET_PARAM(vector<double>, "extrinsicRot", id, extRotV);
+        UTILITY_SET_PARAM(vector<double>, "extrinsicRPY", id, extRPYV);
         double zea[] = {0.0, 0.0, 0.0};
         std::vector < double > ze(zea, std::end(zea));
-        declare_parameter("extrinsicTrans", ze);
-        get_parameter("extrinsicTrans", extTransV);
+        UTILITY_SET_PARAM(vector<double>, "extrinsicTrans", ze, extTransV);
 
         extRot = Eigen::Map<const Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(extRotV.data(), 3, 3);
         extRPY = Eigen::Map<const Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(extRPYV.data(), 3, 3);
         extTrans = Eigen::Map<const Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(extTransV.data(), 3, 1);
         extQRPY = Eigen::Quaterniond(extRPY).inverse();
 
-        declare_parameter<float>("mappingSurfLeafSize", 0.2f);
-        get_parameter("mappingSurfLeafSize", mappingSurfLeafSize);
-        declare_parameter<float>("surroundingKeyframeMapLeafSize", 0.2f);
-        get_parameter("surroundingKeyframeMapLeafSize", surroundingKeyframeMapLeafSize);
-        declare_parameter<float>("z_tollerance", 1000.0f);
-        get_parameter("z_tollerance", z_tollerance);
-        declare_parameter<float>("rotation_tollerance", 1000.0f);
-        get_parameter("rotation_tollerance", rotation_tollerance);
+        UTILITY_SET_PARAM(float, "mappingSurfLeafSize", 0.2f, mappingSurfLeafSize);
+        UTILITY_SET_PARAM(float, "surroundingKeyframeMapLeafSize", 0.2f, surroundingKeyframeMapLeafSize);
+        UTILITY_SET_PARAM(float, "z_tollerance", 1000.0f, z_tollerance);
+        UTILITY_SET_PARAM(float, "rotation_tollerance", 1000.0f, rotation_tollerance);
 
-        declare_parameter<int>("numberOfCores", 2);
-        get_parameter("numberOfCores", numberOfCores);
-        declare_parameter<double>("mappingProcessInterval", 0.15f);
-        get_parameter("mappingProcessInterval", mappingProcessInterval);
+        UTILITY_SET_PARAM(int, "numberOfCores", 2, numberOfCores);
+        UTILITY_SET_PARAM(double, "mappingProcessInterval", 0.15f, mappingProcessInterval);
 
-        declare_parameter<float>("surroundingkeyframeAddingDistThreshold", 1.0f);
-        get_parameter("surroundingkeyframeAddingDistThreshold", surroundingkeyframeAddingDistThreshold);
-        declare_parameter<float>("surroundingkeyframeAddingAngleThreshold", 0.2f);
-        get_parameter("surroundingkeyframeAddingAngleThreshold", surroundingkeyframeAddingAngleThreshold);
-        declare_parameter<float>("surroundingKeyframeDensity", 1.0f);
-        get_parameter("surroundingKeyframeDensity", surroundingKeyframeDensity);
-        declare_parameter<float>("loopClosureICPSurfLeafSize", 0.3f);
-        get_parameter("loopClosureICPSurfLeafSize", loopClosureICPSurfLeafSize);
-        declare_parameter<float>("surroundingKeyframeSearchRadius", 50.0f);
-        get_parameter("surroundingKeyframeSearchRadius", surroundingKeyframeSearchRadius);
+        UTILITY_SET_PARAM(float, "surroundingkeyframeAddingDistThreshold", 1.0f, surroundingkeyframeAddingDistThreshold);
+        UTILITY_SET_PARAM(float, "surroundingkeyframeAddingAngleThreshold", 0.2f, surroundingkeyframeAddingAngleThreshold);
+        UTILITY_SET_PARAM(float, "surroundingKeyframeDensity", 1.0f, surroundingKeyframeDensity);
+        UTILITY_SET_PARAM(float, "loopClosureICPSurfLeafSize", 0.3f, loopClosureICPSurfLeafSize);
+        UTILITY_SET_PARAM(float, "surroundingKeyframeSearchRadius", 50.0f, surroundingKeyframeSearchRadius);
 
-        declare_parameter<bool>("loopClosureEnableFlag", false);
-        get_parameter("loopClosureEnableFlag", loopClosureEnableFlag);
-        declare_parameter<float>("loopClosureFrequency", 1.0f);
-        get_parameter("loopClosureFrequency", loopClosureFrequency);
-        declare_parameter<int>("surroundingKeyframeSize", 50);
-        get_parameter("surroundingKeyframeSize", surroundingKeyframeSize);
-        declare_parameter<float>("historyKeyframeSearchRadius", 10.0f);
-        get_parameter("historyKeyframeSearchRadius", historyKeyframeSearchRadius);
-        declare_parameter<float>("historyKeyframeSearchTimeDiff", 30.0f);
-        get_parameter("historyKeyframeSearchTimeDiff", historyKeyframeSearchTimeDiff);
-        declare_parameter<int>("historyKeyframeSearchNum", 25);
-        get_parameter("historyKeyframeSearchNum", historyKeyframeSearchNum);
-        declare_parameter<float>("historyKeyframeFitnessScore", 0.3f);
-        get_parameter("historyKeyframeFitnessScore", historyKeyframeFitnessScore);
+        UTILITY_SET_PARAM(bool, "loopClosureEnableFlag", false, loopClosureEnableFlag);
+        UTILITY_SET_PARAM(float, "loopClosureFrequency", 1.0f, loopClosureFrequency);
+        UTILITY_SET_PARAM(int, "surroundingKeyframeSize", 50, surroundingKeyframeSize);
+        UTILITY_SET_PARAM(float, "historyKeyframeSearchRadius", 10.0f, historyKeyframeSearchRadius);
+        UTILITY_SET_PARAM(float, "historyKeyframeSearchTimeDiff", 30.0f, historyKeyframeSearchTimeDiff);
+        UTILITY_SET_PARAM(int, "historyKeyframeSearchNum", 25, historyKeyframeSearchNum);
+        UTILITY_SET_PARAM(float, "historyKeyframeFitnessScore", 0.3f, historyKeyframeFitnessScore);
 
 
-       declare_parameter<float>("globalMapVisualizationSearchRadius", 1e3f);
-        get_parameter("globalMapVisualizationSearchRadius", globalMapVisualizationSearchRadius);
-        declare_parameter<float>("globalMapVisualizationPoseDensity", 10.0);
-        get_parameter("globalMapVisualizationPoseDensity", globalMapVisualizationPoseDensity);
-        declare_parameter<float>("globalMapVisualizationLeafSize", 1.0f);
-        get_parameter("globalMapVisualizationLeafSize", globalMapVisualizationLeafSize);
+        UTILITY_SET_PARAM(float, "globalMapVisualizationSearchRadius", 1e3f, globalMapVisualizationSearchRadius);
+        UTILITY_SET_PARAM(float, "globalMapVisualizationPoseDensity", 10.0, globalMapVisualizationPoseDensity);
+        UTILITY_SET_PARAM(float, "globalMapVisualizationLeafSize", 1.0f, globalMapVisualizationLeafSize);
+
+        // Map
+        UTILITY_SET_PARAM(bool, "map.saveRawPointClouds", true, saveRawPointClouds);
+
+        // Block Maps
+        UTILITY_SET_PARAM(bool, "block_map.saveBlockMaps", true, blockMapParam.save);
+        UTILITY_SET_PARAM(bool, "block_map.saveBlockMapGlobalCloud", true, blockMapParam.saveGlobal);
+        UTILITY_SET_PARAM(bool, "block_map.debug", false, blockMapParam.debug);
+        UTILITY_SET_PARAM(int, "block_map.width", 50, blockMapParam.width);
+
 
         usleep(100);
     }
@@ -484,6 +443,12 @@ rclcpp::QoS QosPolicy(const string &history_policy, const string &reliability_po
     qos_profile.avoid_ros_namespace_conventions = false;
 
     return rclcpp::QoS(rclcpp::QoSInitialization(qos_profile.history, qos_profile.depth), qos_profile);
+}
+
+std::string padZeros(int val, int num_digits = 6) {
+  std::ostringstream out;
+  out << std::internal << std::setfill('0') << std::setw(num_digits) << val;
+  return out.str();
 }
 
 #endif

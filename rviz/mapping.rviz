@@ -5,6 +5,8 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Mapping1
+        - /Mapping1/Scan1
+        - /Mapping1/GlobalMap1
         - /RTK-GPS Status1/Topic1
         - /Group1
       Splitter Ratio: 0.7147058844566345
@@ -68,14 +70,14 @@ Visualization Manager:
         - Alpha: 1
           Autocompute Intensity Bounds: true
           Autocompute Value Bounds:
-            Max Value: 10.765344619750977
-            Min Value: -6.288963794708252
+            Max Value: 14.97029972076416
+            Min Value: -7.768704414367676
             Value: true
           Axis: Z
           Channel Name: intensity
           Class: rviz_default_plugins/PointCloud2
-          Color: 255; 255; 255
-          Color Transformer: AxisColor
+          Color: 217; 217; 217
+          Color Transformer: FlatColor
           Decay Time: 0
           Enabled: true
           Invert Rainbow: false
@@ -100,7 +102,7 @@ Visualization Manager:
           Use rainbow: true
           Value: true
         - Alpha: 1
-          Autocompute Intensity Bounds: true
+          Autocompute Intensity Bounds: false
           Autocompute Value Bounds:
             Max Value: 10
             Min Value: -10
@@ -114,9 +116,9 @@ Visualization Manager:
           Enabled: true
           Invert Rainbow: false
           Max Color: 255; 255; 255
-          Max Intensity: 5385
+          Max Intensity: 1.7999999499807018e-06
           Min Color: 0; 0; 0
-          Min Intensity: 5
+          Min Intensity: 9.99999883788405e-07
           Name: GlobalMap
           Position Transformer: XYZ
           Selectable: true
@@ -176,7 +178,8 @@ Visualization Manager:
           Enabled: true
           Name: LoopClosure
           Namespaces:
-            {}
+            loop_edges: true
+            loop_nodes: true
           Topic:
             Depth: 5
             Durability Policy: Volatile
@@ -252,7 +255,7 @@ Visualization Manager:
             Reliability Policy: Reliable
             Value: /emlid_color/gps_covariance_markers
           Value: true
-      Enabled: true
+      Enabled: false
       Name: Group
   Enabled: true
   Global Options:
@@ -297,25 +300,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 588.0590209960938
+      Distance: 708.917236328125
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -112.05369567871094
-        Y: 32.02415466308594
-        Z: 0.28802308440208435
+        X: -128.9599151611328
+        Y: -184.56625366210938
+        Z: -4.909932613372803
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.5697963237762451
+      Pitch: 1.0697968006134033
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 4.7403998374938965
+      Yaw: 1.6022087335586548
     Saved: ~
 Window Geometry:
   Displays:

@@ -101,6 +101,9 @@ public:
     pcl::PointCloud<PointTypePose>::Ptr cloudKeyPoses6D;
     pcl::PointCloud<PointType>::Ptr copy_cloudKeyPoses3D;
     pcl::PointCloud<PointTypePose>::Ptr copy_cloudKeyPoses6D;
+    vector<Eigen::MatrixXd> keyPoseCovariance;
+    vector<double> keyTransConfidence;
+    vector<double> keyRotConfidence;
 
     pcl::PointCloud<PointType>::Ptr laserCloudSurfLast; // surf feature set from odoOptimization
     pcl::PointCloud<PointType>::Ptr laserCloudSurfLastDS; // downsampled surf feature set from odoOptimization
@@ -163,6 +166,8 @@ public:
 
     mapOptimization(const rclcpp::NodeOptions & options) : ParamServer("liorf_mapOptimization", options)
     {
+        RCLCPP_INFO_ONCE(this->get_logger(), "Save BM: %d GM: %d; Debug: %d; Width: %d", blockMapParam.save, blockMapParam.saveGlobal, blockMapParam.debug, blockMapParam.width);
+
         ISAM2Params parameters;
         parameters.relinearizeThreshold = 0.1;
         parameters.relinearizeSkip = 1;
@@ -287,11 +292,9 @@ public:
 
     void gpsHandlerOdometry(const nav_msgs::msg::Odometry::SharedPtr gpsMsg)
     {
-        static bool firstPass = true;
-        if (firstPass){
-            firstPass = false;
-            RCLCPP_INFO(rclcpp::get_logger("mapOptimization"), "Got first GPS message from topic: %s", gpsTopic.c_str());
-        }
+        RCLCPP_INFO_ONCE(rclcpp::get_logger("mapOptimization"), "Got first GPS message from topic: %s", gpsTopic.c_str());
+        RCLCPP_INFO_ONCE(rclcpp::get_logger("mapOptimization"), "\033[1;32mGPS Ref received status: %slat: %0.2f, lon: %0.2f, alt: %0.2f\033[0m", 
+            gpsRef.useRef ? "\033[1;32m" : "\033[1;33m", gpsRef.lat, gpsRef.lon, gpsRef.alt);
 
         gpsQueue.push_back(*gpsMsg);
 
@@ -299,11 +302,9 @@ public:
 
     void gpsHandlerNavSatFix(const sensor_msgs::msg::NavSatFix::SharedPtr gpsMsg)
     {
-        static bool firstPass = true;
-        if (firstPass){
-            firstPass = false;
-            RCLCPP_INFO(rclcpp::get_logger("mapOptimization"), "Got first GPS message from topic: %s", gpsTopic.c_str());
-        }
+        RCLCPP_INFO_ONCE(rclcpp::get_logger("mapOptimization"), "Got first GPS message from topic: %s", gpsTopic.c_str());
+        RCLCPP_INFO_ONCE(rclcpp::get_logger("mapOptimization"), "\033[1;32mGPS Ref received status: %slat: %0.2f, lon: %0.2f, alt: %0.2f\033[0m", 
+            gpsRef.useRef ? "\033[1;32m" : "\033[1;33m", gpsRef.lat, gpsRef.lon, gpsRef.alt);
         
         if (gpsMsg->status.status < 0) {
             RCLCPP_WARN(rclcpp::get_logger("mapOptimization"), "No GPS FIX");
@@ -350,7 +351,7 @@ public:
         po->intensity = pi->intensity;
     }
 
-    pcl::PointCloud<PointType>::Ptr transformPointCloud(pcl::PointCloud<PointType>::Ptr cloudIn, PointTypePose* transformIn)
+    pcl::PointCloud<PointType>::Ptr transformPointCloud(pcl::PointCloud<PointType>::Ptr cloudIn, PointTypePose* transformIn, double confidence=-1)
     {
         pcl::PointCloud<PointType>::Ptr cloudOut(new pcl::PointCloud<PointType>());
 
@@ -366,7 +367,10 @@ public:
             cloudOut->points[i].x = transCur(0,0) * pointFrom.x + transCur(0,1) * pointFrom.y + transCur(0,2) * pointFrom.z + transCur(0,3);
             cloudOut->points[i].y = transCur(1,0) * pointFrom.x + transCur(1,1) * pointFrom.y + transCur(1,2) * pointFrom.z + transCur(1,3);
             cloudOut->points[i].z = transCur(2,0) * pointFrom.x + transCur(2,1) * pointFrom.y + transCur(2,2) * pointFrom.z + transCur(2,3);
-            cloudOut->points[i].intensity = pointFrom.intensity;
+            if (confidence > 0)
+              cloudOut->points[i].intensity = confidence;
+            else
+              cloudOut->points[i].intensity = pointFrom.intensity;
         }
         return cloudOut;
     }
@@ -418,6 +422,143 @@ public:
 
 
 
+    void saveCovariances(vector<Eigen::MatrixXd>& _poseCovariance, vector<double>& _transConfidence, vector<double>& _rotConfidence, string _filename)
+    {
+      if (_poseCovariance.size() != _transConfidence.size() && _poseCovariance.size() != _rotConfidence.size())
+      {
+        RCLCPP_ERROR(rclcpp::get_logger("saveCovariances"), "Can't save confidence/covariance information to file. Size mismatch. pose %ld, trans %ld, rot %ld",
+                      _poseCovariance.size(), _transConfidence.size(), _rotConfidence.size());
+        return;
+      }
+
+      std::fstream stream(_filename.c_str(), std::fstream::out);
+
+      // Write header line
+      stream << "Translational Confidence,Rotational Confidence,6x6 Covariance Matrix" << std::endl;
+
+      for (int i = 0; i < (int)_poseCovariance.size(); i++)
+      {
+        stream << std::scientific << std::setprecision(6) 
+               << _transConfidence.at(i) << "," 
+               << _rotConfidence.at(i) << "," 
+               << _poseCovariance.at(i).reshaped().transpose() << std::endl;
+      }
+    }
+
+
+    void saveOptimizedVertices(gtsam::Values _estimates, pcl::PointCloud<PointTypePose>::Ptr _cloudKeyPoses6D, std::string _filename)
+    {
+      using namespace gtsam;
+
+      std::fstream stream(_filename.c_str(), std::fstream::out);
+      
+      // Write header line
+      stream << "time t.x t.y t.z q.x q.y q.z q.w" << std::endl;
+
+      for (const auto& key_value : _estimates) {
+        auto p = dynamic_cast<const GenericValue<Pose3>*>(&key_value.value);
+        if (!p) continue;
+
+        const Pose3& pose = p->value();
+
+        // Extract timestamp from keyframe index
+        Symbol sym(key_value.key);
+        int keyframe_index = sym.index();
+        double time = _cloudKeyPoses6D->points[keyframe_index].time;
+
+        Point3 t = pose.translation();
+        Rot3 R = pose.rotation();
+
+        // Convert rotation to quaternion
+        Eigen::Matrix3d R_eigen = R.matrix();
+        Eigen::Quaterniond q(R_eigen);
+
+        // Write in format: time tx ty tz qx qy qz qw
+        stream << std::fixed << std::setprecision(6)
+              << time << " "
+              << t.x() << " " << t.y() << " " << t.z() << " "
+              << q.x() << " " << q.y() << " " << q.z() << " " << q.w()
+              << std::endl;
+      }
+    }
+
+
+    bool saveBlockMaps(vector<pcl::PointCloud<PointType>::Ptr> keyFrames, pcl::PointCloud<PointTypePose>::Ptr keyPoses6D, const string dirPath = "Block_Maps/")
+    {
+        if (keyFrames.size() != keyPoses6D->size())
+        {
+            cerr << "Number of key frames and key poses doesn't match! KeyFrames: " << keyFrames.size() << " KeyPoses: " << keyPoses6D->size() << endl;
+            return false;
+        }
+
+        if (!fs::exists(dirPath))
+        {
+            if (!fs::create_directories(dirPath))
+            {
+                cerr << "Failed to create directory: " << dirPath << endl;
+                return false;
+            }
+        }
+
+        unordered_map<string, pcl::PointCloud<PointType>::Ptr> blockMaps;
+        
+        int tx = 0;
+        int ty = 0;
+        int cellx = 0;
+        int celly = 0;
+        string key = "N/A";
+        
+        for (int i = 0; i < (int)keyPoses6D->size(); i++)
+        {
+            tx = keyPoses6D->points[i].x;
+            ty = keyPoses6D->points[i].y;
+            cellx = (tx >= 0) ? (tx / blockMapParam.width) + 1 : (tx / blockMapParam.width) - 1;
+            celly = (ty >= 0) ? (ty / blockMapParam.width) + 1 : (ty / blockMapParam.width) - 1;
+            key = "bm_" + to_string(cellx) + "_" + to_string(celly);
+            
+            if (blockMapParam.debug)
+            {
+                cout << "tx: " << tx << ", ty: " << ty << ", cellx: " << cellx << ", celly: " << celly << ", key: " << key << endl;
+            }
+            
+            if (blockMaps.find(key) == blockMaps.end()) // Not found
+            {
+                blockMaps[key] = pcl::PointCloud<PointType>::Ptr(new pcl::PointCloud<PointType>());
+            }
+            
+            *blockMaps[key] += *transformPointCloud(keyFrames[i], &keyPoses6D->points[i], keyTransConfidence.at(i));
+        }
+        
+        for (const auto &kv : blockMaps)
+        {
+            string filePath = dirPath + kv.first + ".pcd";
+            
+            if (pcl::io::savePCDFileBinary(filePath, *kv.second) < 0)
+            {
+                cerr << "Failed to save PCD file: " << filePath << endl;
+            }
+        }
+        
+        if (blockMapParam.saveGlobal) 
+        {
+            static int i = 0;
+            pcl::PointCloud<PointType>::Ptr globalMapCloud(new pcl::PointCloud<PointType>());
+            
+            for (const auto &kv : blockMaps)
+            {
+                *globalMapCloud += *kv.second;
+                cout << "Adding blockmap " << kv.first << " to global map. " << ++i << " of " << blockMaps.size() << endl;
+            }
+            if (pcl::io::savePCDFileBinary(dirPath + "/GlobalMap.pcd", *globalMapCloud) < 0)
+            {
+                cerr << "Failed to save PCD file: " << dirPath + "/GlobalMap.pcd" << endl;
+                return false;
+            }
+        }
+
+        return true;
+    }
+
 
     bool saveMapService(const std::shared_ptr<liorf::srv::SaveMap::Request> req,
                                 std::shared_ptr<liorf::srv::SaveMap::Response> res)
@@ -425,13 +566,38 @@ public:
       string saveMapDirectory;
 
       cout << "****************************************************" << endl;
-      cout << "Saving map to pcd files ..." << endl;
+      cout << "\tSaving map to pcd files ..." << endl;
+      cout << "****************************************************" << endl;
       if(req->destination.empty()) saveMapDirectory = std::getenv("HOME") + savePCDDirectory;
       else saveMapDirectory = std::getenv("HOME") + req->destination;
+      string saveNodePCDDirectory = saveMapDirectory + "/Scans/";
       cout << "Save destination: " << saveMapDirectory << endl;
       // create directory and remove old files;
-      int unused = system((std::string("exec rm -r ") + saveMapDirectory).c_str());
-      unused = system((std::string("mkdir -p ") + saveMapDirectory).c_str());
+      if (fs::exists(saveMapDirectory))
+      {
+        std::error_code ec;
+        fs::remove_all(saveMapDirectory, ec);
+        if (ec)
+        {
+          RCLCPP_ERROR(this->get_logger(), "Failed to remove %s. Can't save map.", saveMapDirectory.c_str());
+          return false;
+        }
+      }
+
+      fs::create_directories(saveMapDirectory);
+
+      if (saveRawPointClouds){
+        fs::create_directories(saveNodePCDDirectory);
+      }
+
+      // save optimized poses
+      const std::string optimized_pg_vertices_filename {saveMapDirectory + "/optimized_poses.txt"};
+      saveOptimizedVertices(isamCurrentEstimate, cloudKeyPoses6D, optimized_pg_vertices_filename);
+      
+      // Save confidences and covariances. 
+      const std::string confidence_covariance_filename {saveMapDirectory + "/confidence_and_covariance.txt"};
+      saveCovariances(keyPoseCovariance, keyTransConfidence, keyRotConfidence, confidence_covariance_filename);
+      
       // save key frame transformations
       pcl::io::savePCDFileBinary(saveMapDirectory + "/trajectory.pcd", *cloudKeyPoses3D);
       pcl::io::savePCDFileBinary(saveMapDirectory + "/transformations.pcd", *cloudKeyPoses6D);
@@ -442,8 +608,14 @@ public:
       pcl::PointCloud<PointType>::Ptr globalMapCloud(new pcl::PointCloud<PointType>());
       for (int i = 0; i < (int)cloudKeyPoses3D->size(); i++) {
           *globalSurfCloud   += *transformPointCloud(surfCloudKeyFrames[i],    &cloudKeyPoses6D->points[i]);
-          cout << "\r" << std::flush << "Processing feature cloud " << i << " of " << cloudKeyPoses6D->size() << " ...";
+          std::string curr_scan_node_idx = padZeros(i);
+
+          if (saveRawPointClouds)
+            pcl::io::savePCDFileBinary(saveNodePCDDirectory + curr_scan_node_idx + ".pcd", *surfCloudKeyFrames[i]);
+
+          cout << "\r" << std::flush << "Processing feature cloud " << i+1 << " of " << cloudKeyPoses6D->size();
       }
+      cout << endl;
 
       if(req->resolution != 0)
       {
@@ -464,13 +636,19 @@ public:
       // save global point cloud map
       *globalMapCloud += *globalSurfCloud;
 
+      if (blockMapParam.save)
+      {
+        if (!saveBlockMaps(surfCloudKeyFrames, cloudKeyPoses6D, saveMapDirectory+"/BlockMaps/"))
+            RCLCPP_WARN(this->get_logger(), "Failed to save Blockmaps");
+      }      
       int ret = pcl::io::savePCDFileBinary(saveMapDirectory + "/GlobalMap.pcd", *globalMapCloud);
       res->success = ret == 0;
 
       downSizeFilterSurf.setLeafSize(mappingSurfLeafSize, mappingSurfLeafSize, mappingSurfLeafSize);
 
       cout << "****************************************************" << endl;
-      cout << "Saving map to pcd files completed\n" << endl;
+      cout << "\tSaving map to pcd files completed" << endl;
+      cout << "****************************************************\n" << endl;
 
       return true;
     }
@@ -535,7 +713,7 @@ public:
             if (common_lib_->pointDistance(globalMapKeyPosesDS->points[i], cloudKeyPoses3D->back()) > globalMapVisualizationSearchRadius)
                 continue;
             int thisKeyInd = (int)globalMapKeyPosesDS->points[i].intensity;
-            *globalMapKeyFrames += *transformPointCloud(surfCloudKeyFrames[thisKeyInd],    &cloudKeyPoses6D->points[thisKeyInd]);
+            *globalMapKeyFrames += *transformPointCloud(surfCloudKeyFrames[thisKeyInd],    &cloudKeyPoses6D->points[thisKeyInd], keyTransConfidence.at(thisKeyInd));
         }
         // downsample visualized points
         pcl::VoxelGrid<PointType> downSizeFilterGlobalMapKeyFrames; // for global map visualization
@@ -546,10 +724,67 @@ public:
     }
 
 
+    double getCovConfidence3x3(Eigen::MatrixXd cov, bool print=false)
+    {   
+        if (cov.rows() != 3 || cov.cols() != 3) 
+        {
+            throw std::invalid_argument("Covariance matrix must be 3x3.");
+        }
 
+        // Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eigensolver(cov);
+        // if (eigensolver.info() != Eigen::Success)
+        // {
+        //     throw std::runtime_error("Could not compute eigen values for matrix");
+        // }
 
+        // if (print)
+        // {
+        //   stringstream ss;
+        //   ss << "Positional Cov:\n" << cov << "\n";
+        //   ss << "Eigen Values:\n" << eigensolver.eigenvalues() << "\n";
+        //   ss << "Max Eigen Value: " << eigensolver.eigenvalues().maxCoeff() << "\n";
 
+        //   cout << ss.str() << endl;
+        // }
 
+        if (print)
+        {
+            stringstream ss;    
+            ss << "Positional Cov:\n" << cov << "\n";
+            ss << "Determinant: " << cov.determinant() << "\n";
+
+            cout << ss.str() << endl;
+        }
+          
+        // return sqrt(cov(0,0) + cov(1,1));
+        return cov.determinant();
+    }
+
+    void getCovConfidence6x6(Eigen::MatrixXd cov, double& transConfidence, double& rotConfidence, bool print=false)
+    {   
+        if (cov.rows() != 6 || cov.cols() != 6) 
+        {
+            throw std::invalid_argument("Covariance matrix must be 6x6.");
+        }
+
+        Eigen::Matrix3d transCov = cov.topLeftCorner(3,3);
+        Eigen::Matrix3d rotCov = cov.bottomRightCorner(3,3);
+
+        transConfidence = transCov.determinant();
+        rotConfidence = rotCov.determinant();
+
+        if (print)
+        {
+            stringstream ss;    
+            ss << "Translational Cov:\n" << transCov << "\n";
+            ss << "Trans Determinant: " << transConfidence << "\n";
+            ss << "Rotational Cov:\n" << rotCov << "\n";
+            ss << "Rot Determinant: " << rotConfidence << "\n";
+
+            cout << ss.str() << endl;
+        }
+          
+    }
 
 
 
@@ -680,7 +915,7 @@ public:
         auto detectResult = scManager.detectLoopClosureID(); 
         int loopKeyCur    = copy_cloudKeyPoses3D->size() - 1;;
         int loopKeyPre    = detectResult.first;
-        float yawDiffRad  = detectResult.second; // not use for v1 (because pcl icp withi initial somthing wrong...)
+        // float yawDiffRad  = detectResult.second; // not use for v1 (because pcl icp withi initial somthing wrong...)
         if( loopKeyPre == -1)
             return;
 
@@ -1431,15 +1666,16 @@ public:
     {
         if (cloudKeyPoses3D->points.empty())
         {
-            noiseModel::Diagonal::shared_ptr priorNoise = noiseModel::Diagonal::Variances((gtsam::Vector(6) << 1e-2, 1e-2, M_PI*M_PI, 1e8, 1e8, 1e8).finished()); // rad*rad, meter*meter
-            gtSAMgraph.add(PriorFactor<Pose3>(0, trans2gtsamPose(transformTobeMapped), priorNoise));
-            initialEstimate.insert(0, trans2gtsamPose(transformTobeMapped));
+            // noiseModel::Diagonal::shared_ptr priorNoise = noiseModel::Diagonal::Variances((gtsam::Vector(6) << 1e-2, 1e-2, M_PI*M_PI, 1e8, 1e8, 1e8).finished()); // rad*rad, meter*meter
+            noiseModel::Diagonal::shared_ptr priorNoise = noiseModel::Diagonal::Variances((gtsam::Vector(6) << 1e-2, 1e-2, 1e-2, 1e8, 1e8, 1e8).finished()); // rad*rad, meter*meter
+            gtSAMgraph.add(PriorFactor<Pose3>(X(0), trans2gtsamPose(transformTobeMapped), priorNoise));
+            initialEstimate.insert(X(0), trans2gtsamPose(transformTobeMapped));
         }else{
             noiseModel::Diagonal::shared_ptr odometryNoise = noiseModel::Diagonal::Variances((gtsam::Vector(6) << 1e-6, 1e-6, 1e-6, 1e-4, 1e-4, 1e-4).finished());
             gtsam::Pose3 poseFrom = pclPointTogtsamPose3(cloudKeyPoses6D->points.back());
             gtsam::Pose3 poseTo   = trans2gtsamPose(transformTobeMapped);
-            gtSAMgraph.add(BetweenFactor<Pose3>(cloudKeyPoses3D->size()-1, cloudKeyPoses3D->size(), poseFrom.between(poseTo), odometryNoise));
-            initialEstimate.insert(cloudKeyPoses3D->size(), poseTo);
+            gtSAMgraph.add(BetweenFactor<Pose3>(X(cloudKeyPoses3D->size()-1), X(cloudKeyPoses3D->size()), poseFrom.between(poseTo), odometryNoise));
+            initialEstimate.insert(X(cloudKeyPoses3D->size()), poseTo);
         }
     }
 
@@ -1514,7 +1750,7 @@ public:
                 gtsam::Vector Vector3(3);
                 Vector3 << max(noise_x, 1.0f), max(noise_y, 1.0f), max(noise_z, 1.0f);
                 noiseModel::Diagonal::shared_ptr gps_noise = noiseModel::Diagonal::Variances(Vector3);
-                gtsam::GPSFactor gps_factor(cloudKeyPoses3D->size(), gtsam::Point3(gps_x, gps_y, gps_z), gps_noise);
+                gtsam::GPSFactor gps_factor(X(cloudKeyPoses3D->size()), gtsam::Point3(gps_x, gps_y, gps_z), gps_noise);
                 gtSAMgraph.add(gps_factor);
 
                 aLoopIsClosed = true;
@@ -1535,7 +1771,7 @@ public:
             gtsam::Pose3 poseBetween = loopPoseQueue[i];
             // gtsam::noiseModel::Diagonal::shared_ptr noiseBetween = loopNoiseQueue[i];
             auto noiseBetween = loopNoiseQueue[i];
-            gtSAMgraph.add(BetweenFactor<Pose3>(indexFrom, indexTo, poseBetween, noiseBetween));
+            gtSAMgraph.add(BetweenFactor<Pose3>(X(indexFrom), X(indexTo), poseBetween, noiseBetween));
         }
 
         loopIndexQueue.clear();
@@ -1583,7 +1819,7 @@ public:
         Pose3 latestEstimate;
 
         isamCurrentEstimate = isam->calculateEstimate();
-        latestEstimate = isamCurrentEstimate.at<Pose3>(isamCurrentEstimate.size()-1);
+        latestEstimate = isamCurrentEstimate.at<Pose3>(X(isamCurrentEstimate.size()-1));
         // cout << "****************************************************" << endl;
         // isamCurrentEstimate.print("Current estimate: ");
 
@@ -1603,10 +1839,22 @@ public:
         thisPose6D.time = timeLaserInfoCur;
         cloudKeyPoses6D->push_back(thisPose6D);
 
-        // cout << "****************************************************" << endl;
+        cout << "****************************************************" << endl;
+        poseCovariance = isam->marginalCovariance(X(isamCurrentEstimate.size()-1));
+        keyPoseCovariance.push_back(poseCovariance);
+        double tmpTransConfidence, tmpRotConfidence;
+        getCovConfidence6x6(keyPoseCovariance.back(), tmpTransConfidence, tmpRotConfidence, true);
+        keyTransConfidence.push_back(tmpTransConfidence);
+        keyRotConfidence.push_back(tmpRotConfidence);
         // cout << "Pose covariance:" << endl;
-        // cout << isam->marginalCovariance(isamCurrentEstimate.size()-1) << endl << endl;
-        poseCovariance = isam->marginalCovariance(isamCurrentEstimate.size()-1);
+        cout << poseCovariance << endl;
+        cout << "Trans confidence:" << keyTransConfidence.back() << ", Rot confidence: " << keyRotConfidence.back() << endl << endl;
+
+        if (isamCurrentEstimate.size() != keyPoseCovariance.size())
+        {
+            cout << "isamCurrentEstimate (size " << isamCurrentEstimate.size() << 
+                    ") is not the same size as keyPoseCovariance (size " << keyPoseCovariance.size() << ")\n";
+        }
 
         // save updated transform
         transformTobeMapped[0] = latestEstimate.rotation().roll();
@@ -1659,29 +1907,58 @@ public:
 
         if (aLoopIsClosed == true)
         {
+            Eigen::MatrixXd tmpPoseCovariance;
             // clear map cache
             laserCloudMapContainer.clear();
             // clear path
             globalPath.poses.clear();
+            // clear covariance
+            // keyPoseCovariance.clear();
+            //clear confidence
+            // keyTransConfidence.clear();
+            vector<Eigen::MatrixXd> tmpKeyPoseCovariance;
+            vector<double> tmpKeyTransConfidence;
+            vector<double> tmpKeyRotConfidence;
+            double tmpTransConfidence = -1.0;
+            double tmpRotConfidence = -1.0;
+
             // update key poses
             int numPoses = isamCurrentEstimate.size();
             for (int i = 0; i < numPoses; ++i)
             {
-                cloudKeyPoses3D->points[i].x = isamCurrentEstimate.at<Pose3>(i).translation().x();
-                cloudKeyPoses3D->points[i].y = isamCurrentEstimate.at<Pose3>(i).translation().y();
-                cloudKeyPoses3D->points[i].z = isamCurrentEstimate.at<Pose3>(i).translation().z();
+                gtsam::Key key = X(i);
+                cloudKeyPoses3D->points[i].x = isamCurrentEstimate.at<Pose3>(key).translation().x();
+                cloudKeyPoses3D->points[i].y = isamCurrentEstimate.at<Pose3>(key).translation().y();
+                cloudKeyPoses3D->points[i].z = isamCurrentEstimate.at<Pose3>(key).translation().z();
 
                 cloudKeyPoses6D->points[i].x = cloudKeyPoses3D->points[i].x;
                 cloudKeyPoses6D->points[i].y = cloudKeyPoses3D->points[i].y;
                 cloudKeyPoses6D->points[i].z = cloudKeyPoses3D->points[i].z;
-                cloudKeyPoses6D->points[i].roll  = isamCurrentEstimate.at<Pose3>(i).rotation().roll();
-                cloudKeyPoses6D->points[i].pitch = isamCurrentEstimate.at<Pose3>(i).rotation().pitch();
-                cloudKeyPoses6D->points[i].yaw   = isamCurrentEstimate.at<Pose3>(i).rotation().yaw();
+                cloudKeyPoses6D->points[i].roll  = isamCurrentEstimate.at<Pose3>(key).rotation().roll();
+                cloudKeyPoses6D->points[i].pitch = isamCurrentEstimate.at<Pose3>(key).rotation().pitch();
+                cloudKeyPoses6D->points[i].yaw   = isamCurrentEstimate.at<Pose3>(key).rotation().yaw();
+                
+                try {
+                    tmpPoseCovariance = isam->marginalCovariance(key);
+                    tmpKeyPoseCovariance.push_back(tmpPoseCovariance);
+                    getCovConfidence6x6(tmpKeyPoseCovariance.back(), tmpTransConfidence, tmpRotConfidence);
+                    tmpKeyTransConfidence.push_back(tmpTransConfidence);
+                    tmpKeyRotConfidence.push_back(tmpRotConfidence);
+                }
+                catch (const std::exception& e) {
+                    std::cout << "Could not get marginal for key " << key
+                            << ": " << e.what() << std::endl;
+                }
 
                 updatePath(cloudKeyPoses6D->points[i]);
             }
 
+            keyPoseCovariance = tmpKeyPoseCovariance;
+            keyTransConfidence = tmpKeyTransConfidence;
+            keyRotConfidence = tmpKeyRotConfidence;
+
             aLoopIsClosed = false;
+            cout << "Updated Poses!" << endl;
         }
     }
 
@@ -1823,8 +2100,8 @@ public:
         static int lastSLAMInfoPubSize = -1;
         if (pubSLAMInfo->get_subscription_count() != 0)
         {
-            // if (lastSLAMInfoPubSize != cloudKeyPoses6D->size())
-            // {
+            if (lastSLAMInfoPubSize != (int)cloudKeyPoses6D->size())
+            {
             //     liorf::msg::CloudInfo slamInfo;
             //     slamInfo.header.stamp = timeLaserInfoStamp;
             //     pcl::PointCloud<PointType>::Ptr cloudOut(new pcl::PointCloud<PointType>());
@@ -1835,8 +2112,8 @@ public:
             //     *localMapOut += *laserCloudSurfFromMapDS;
             //     slamInfo.key_frame_map = publishCloud(rclcpp::Publisher(), localMapOut, timeLaserInfoStamp, odometryFrame);
             //     pubSLAMInfo->publish(slamInfo);
-            //     lastSLAMInfoPubSize = cloudKeyPoses6D->size();
-            // }
+                lastSLAMInfoPubSize = cloudKeyPoses6D->size();
+            }
         }
     }
 };
