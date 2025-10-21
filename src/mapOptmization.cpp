@@ -1839,16 +1839,16 @@ public:
         thisPose6D.time = timeLaserInfoCur;
         cloudKeyPoses6D->push_back(thisPose6D);
 
-        cout << "****************************************************" << endl;
+        // cout << "****************************************************" << endl;
         poseCovariance = isam->marginalCovariance(X(isamCurrentEstimate.size()-1));
         keyPoseCovariance.push_back(poseCovariance);
         double tmpTransConfidence, tmpRotConfidence;
-        getCovConfidence6x6(keyPoseCovariance.back(), tmpTransConfidence, tmpRotConfidence, true);
+        getCovConfidence6x6(keyPoseCovariance.back(), tmpTransConfidence, tmpRotConfidence, false);
         keyTransConfidence.push_back(tmpTransConfidence);
         keyRotConfidence.push_back(tmpRotConfidence);
         // cout << "Pose covariance:" << endl;
-        cout << poseCovariance << endl;
-        cout << "Trans confidence:" << keyTransConfidence.back() << ", Rot confidence: " << keyRotConfidence.back() << endl << endl;
+        // cout << poseCovariance << endl;
+        // cout << "Trans confidence:" << keyTransConfidence.back() << ", Rot confidence: " << keyRotConfidence.back() << endl << endl;
 
         if (isamCurrentEstimate.size() != keyPoseCovariance.size())
         {
@@ -1958,7 +1958,7 @@ public:
             keyRotConfidence = tmpKeyRotConfidence;
 
             aLoopIsClosed = false;
-            cout << "Updated Poses!" << endl;
+            // cout << "Updated Poses!" << endl;
         }
     }
 
