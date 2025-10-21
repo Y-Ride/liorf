@@ -33,34 +33,33 @@ Video：[基于LIO-SAM框架SLAM算法开发系列视频](https://space.bilibili
 
 ## Dependency
 - [gtsam](https://gtsam.org/get_started/)(Georgia Tech Smoothing and Mapping library)
-  ```
+  ```bash
     sudo add-apt-repository ppa:borglab/gtsam-release-4.0
     sudo apt install libgtsam-dev libgtsam-unstable-dev
   ```
 - Others
-  ```
+  ```bash
     sudo apt install libgeographic-dev
   ```
 
 ## Install
 1. Use the following commands to download and compile the package.
-  ```
+  ```bash
     mkdir -p ~/liorf-ros2/src && cd ~/liorf-ros2/src
-    git clone https://github.com/YJZLuckyBoy/liorf.git
-    cd liorf && git checkout liorf-ros2
-    cd ../../
+    git clone -b liorf-ros2 --recurse-submodules https://github.com/Y-Ride/liorf.git
+    cd ../
     colcon build
   ```
 
 ## Run the package
 1. Run the launch file
-  ```
+  ```bash
     source install/setup.bash
-    ros2 launch liorf run_lio_sam_default.launch.py
+    ros2 launch liorf run_lio_sam_default.launch.py # or run_liorf_ouster.launch.py
   ```
 
 2. Play existing bag files. Example data in ROS2 format can be downloaded here ([lio-sam-dataset with ros2 format](https://drive.google.com/drive/folders/1n2AZC7GPpUMoW0K4nFGOI6vVjQcuxPru?usp=sharing))
-  ```
+  ```bash 
     ros2 bag play casual_walk/
   ```
 
@@ -68,7 +67,7 @@ Video：[基于LIO-SAM框架SLAM算法开发系列视频](https://space.bilibili
 - Make sure your gnss topic type is 'sensor_msgs::msg::NavSatFix';
 
 - Modify 'gpsTopic' paramter in '*.yaml' with yourself gnss topic;
-  ```
+  ```yaml
     gpsTopic: "gps/fix"    # GPS topic
   ```
 - If you want to use liorf with integrated gps factor in kitti dataset, you can use the modified python script in "config/doc/kitti2bag" to obtain high-frequency gps data(Rate: 100HZ, Topic: '/gps/fix/correct'). About how to use "[kitti2bag.py](https://github.com/YJZLuckyBoy/liorf/blob/main/config/doc/kitti2bag/kitti2bag.py)", please refer to [doc/kitti2bag](https://github.com/TixiaoShan/LIO-SAM/tree/master/config/doc/kitti2bag). 
