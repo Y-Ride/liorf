@@ -84,8 +84,6 @@ public:
     string history_policy;
     string reliability_policy;
 
-    std::string robot_id;
-
     //Topics
     string pointCloudTopic;
     string imuTopic;

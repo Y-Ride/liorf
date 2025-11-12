@@ -63,6 +63,13 @@ class mapOptimization : public ParamServer
 {
 
 public:
+
+    enum class GraphType
+    {
+        SLAM,   // Localization and mapping
+        RELOC   // Localization given prior map
+    } graphType;
+
     // gtsam
     NonlinearFactorGraph gtSAMgraph;
     Values initialEstimate;
@@ -75,7 +82,9 @@ public:
     rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr subGPSNavSatFix;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subGPSOdometry;
     rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr subLoop;
+    rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr sub_initial_pose;
 
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubGlobalMap;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudSurround;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubLaserOdometryGlobal;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubLaserOdometryIncremental;
@@ -159,10 +168,18 @@ public:
 
     GeographicLib::LocalCartesian gps_trans_;
 
+    // Relocalization
+    bool has_global_map = false;
+    bool has_initialize_pose = false;
+    bool system_initialized = false;
+    float initialize_pose[6];
+
     // scancontext loop closure
     SCManager scManager;
 
     std::unique_ptr<tf2_ros::TransformBroadcaster> br;
+    std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
     mapOptimization(const rclcpp::NodeOptions & options) : ParamServer("liorf_mapOptimization", options)
     {
@@ -172,6 +189,9 @@ public:
         parameters.relinearizeThreshold = 0.1;
         parameters.relinearizeSkip = 1;
         isam = new ISAM2(parameters);
+
+        tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+        tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
         subCloud = create_subscription<liorf::msg::CloudInfo>("liorf/deskew/cloud_info", QosPolicy(history_policy, reliability_policy),
                     std::bind(&mapOptimization::laserCloudInfoHandler, this, std::placeholders::_1));
@@ -187,6 +207,8 @@ public:
         }
         subLoop = create_subscription<std_msgs::msg::Float64MultiArray>("lio_loop/loop_closure_detection", QosPolicy(history_policy, reliability_policy),
                     std::bind(&mapOptimization::loopInfoHandler, this, std::placeholders::_1));
+        sub_initial_pose = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>("/initialpose", QosPolicy(history_policy, reliability_policy),
+                    std::bind(&mapOptimization::initialposeHandler, this, std::placeholders::_1));
 
         pubKeyPoses = create_publisher<sensor_msgs::msg::PointCloud2>("liorf/mapping/trajectory", QosPolicy(history_policy, reliability_policy));
         pubLaserCloudSurround = create_publisher<sensor_msgs::msg::PointCloud2>("liorf/mapping/map_global", QosPolicy(history_policy, reliability_policy));
@@ -199,6 +221,7 @@ public:
         pubRecentKeyFrames = create_publisher<sensor_msgs::msg::PointCloud2>("liorf/mapping/map_local", QosPolicy(history_policy, reliability_policy));
         pubRecentKeyFrame = create_publisher<sensor_msgs::msg::PointCloud2>("liorf/mapping/cloud_registered", QosPolicy(history_policy, reliability_policy));
         pubCloudRegisteredRaw = create_publisher<sensor_msgs::msg::PointCloud2>("liorf/mapping/cloud_registered_raw", QosPolicy(history_policy, reliability_policy));
+        pubGlobalMap = create_publisher<sensor_msgs::msg::PointCloud2>("liorf/localization/prior_global_map", QosPolicy(history_policy, reliability_policy));
         pubSLAMInfo = create_publisher<liorf::msg::CloudInfo>("liorf/mapping/slam_info", QosPolicy(history_policy, reliability_policy));
         pubGpsOdom = create_publisher<nav_msgs::msg::Odometry>("liorf/mapping/gps_odom", QosPolicy(history_policy, reliability_policy));
 
@@ -213,6 +236,19 @@ public:
         br = std::make_unique<tf2_ros::TransformBroadcaster>(this);
 
         allocateMemory();
+        // TODO: Determine graphType based on files provided
+        has_global_map = loadGlobalMap();
+        if (has_global_map)
+        {
+            graphType = GraphType::RELOC;
+            RCLCPP_INFO(this->get_logger(), "Loaded global map. Starting in relocalization mode.");
+        }
+        else
+        {
+            graphType = GraphType::SLAM;
+            RCLCPP_INFO(this->get_logger(), "No global map found. Starting in SLAM mode.");
+        }
+
     }
 
     void allocateMemory()
@@ -249,6 +285,114 @@ public:
         matP = cv::Mat(6, 6, CV_32F, cv::Scalar::all(0));
     }
 
+    // Relocalization
+    bool loadGlobalMap()
+    {
+        std::string global_map_path = std::getenv("HOME") + savePCDDirectory + "GlobalMap.pcd";
+        if (fs::exists(global_map_path))
+            pcl::io::loadPCDFile<PointType>(global_map_path, *laserCloudSurfFromMap);
+        else
+            return false;
+        downSizeFilterLocalMapSurf.setInputCloud(laserCloudSurfFromMap);
+        downSizeFilterLocalMapSurf.filter(*laserCloudSurfFromMapDS);
+        laserCloudSurfFromMapDSNum = laserCloudSurfFromMapDS->size();
+        
+        if (laserCloudSurfFromMapDSNum < 1000)
+        {
+            RCLCPP_WARN(this->get_logger(), "Global map of size %d is too small. Will not load it.", laserCloudSurfFromMapDSNum);
+            return false;
+        }
+        else
+        {
+            RCLCPP_INFO(this->get_logger(), "Global map size: %d", laserCloudSurfFromMapDSNum);
+        }
+          
+        kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMapDS);
+        
+        sleep(3);
+        publishCloud(pubGlobalMap, laserCloudSurfFromMapDS, rclcpp::Time(), mapFrame);   
+        
+        return true;
+    }
+
+    // Relocalization
+    void initialposeHandler(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msgIn) 
+    {
+        tf2::Quaternion q(msgIn->pose.pose.orientation.x, msgIn->pose.pose.orientation.y, 
+                            msgIn->pose.pose.orientation.z, msgIn->pose.pose.orientation.w);
+        tf2::Matrix3x3 qm(q);
+
+        double roll, pitch, yaw;
+        qm.getRPY(roll, pitch, yaw);
+
+        initialize_pose[0] = roll;
+        initialize_pose[1] = pitch;
+        initialize_pose[2] = yaw;
+
+        initialize_pose[3] = msgIn->pose.pose.position.x;
+        initialize_pose[4] = msgIn->pose.pose.position.y;
+        initialize_pose[5] = msgIn->pose.pose.position.z;
+
+        std::cout << "manual initialize pose: \n" << initialize_pose[3] << "\n" << initialize_pose[4] << "\n" << initialize_pose[5] << "\n" 
+                  << initialize_pose[0] << "\n" << initialize_pose[1] << "\n" << initialize_pose[2] << std::endl;
+
+        has_initialize_pose = true;
+    }
+
+    // Relocalization
+    void initialposeHandlerGps() 
+    {
+        if (gpsQueue.size() < 2)
+            return;
+        
+        // Add GPS every a few meters
+        PointType curGPSPoint;
+        curGPSPoint.x = gpsQueue.back().pose.pose.position.x;
+        curGPSPoint.y = gpsQueue.back().pose.pose.position.y;
+        curGPSPoint.z = gpsQueue.back().pose.pose.position.z;
+
+        PointType firstGPSPoint;
+        firstGPSPoint.x = gpsQueue.front().pose.pose.position.x;
+        firstGPSPoint.y = gpsQueue.front().pose.pose.position.y;
+        firstGPSPoint.z = gpsQueue.front().pose.pose.position.z;
+        
+        if (common_lib_->pointDistance(curGPSPoint, firstGPSPoint) < 1.0)
+            return;
+        else 
+        {
+            RCLCPP_INFO(get_logger(), "GPS initial pose set. Size of gpsQueue: %ld", gpsQueue.size());
+            
+            double heading_baselink = std::atan2(
+                curGPSPoint.y - firstGPSPoint.y,
+                curGPSPoint.x - firstGPSPoint.x
+            );
+
+            double heading_lidar = std::atan2(
+                firstGPSPoint.y - curGPSPoint.y,
+                firstGPSPoint.x - curGPSPoint.x 
+            );
+            std::cout << "heading_lidar: " << heading_lidar << ", heading_baselink: " << heading_baselink << std::endl;
+            initialize_pose[0] = 0.0;
+            initialize_pose[1] = 0.0;
+            initialize_pose[2] = heading_lidar;
+
+            initialize_pose[3] = gpsQueue.back().pose.pose.position.x;
+            initialize_pose[4] = gpsQueue.back().pose.pose.position.y;
+            initialize_pose[5] = gpsQueue.back().pose.pose.position.z;
+
+            RCLCPP_INFO(get_logger(), "\nGPS initial pose: \n\t x: %f\n\t y: %f\n\t z: %f\n\t roll:  %f\n\t pitch: %f\n\t yaw:   %f", 
+                initialize_pose[3], initialize_pose[4], initialize_pose[5], 
+                initialize_pose[0], initialize_pose[1], initialize_pose[2]);
+
+            has_initialize_pose = true;
+
+            // Empty queue
+            nav_msgs::msg::Odometry initialGps = gpsQueue.back();
+            gpsQueue.clear();
+            gpsQueue.push_back(initialGps);
+        }
+    }
+
     void laserCloudInfoHandler(const liorf::msg::CloudInfo::SharedPtr msgIn)
     {
         // extract time stamp
@@ -259,18 +403,21 @@ public:
         cloudInfo = *msgIn;
         pcl::fromROSMsg(msgIn->cloud_deskewed, *laserCloudSurfLast);
 
-        // TODO
-        // ......
-        // remapping
-        // ......
-        // END
-
         std::lock_guard<std::mutex> lock(mtx);
 
         static double timeLastProcessing = -1;
         if (timeLaserInfoCur - timeLastProcessing >= mappingProcessInterval)
         {
             timeLastProcessing = timeLaserInfoCur;
+
+            if (graphType == GraphType::RELOC)
+            {
+                if (!system_initialized)
+                {
+                    if (!systemInitialize())
+                        return;
+                }
+            }
 
             updateInitialGuess();
 
@@ -290,6 +437,106 @@ public:
         }
     }
 
+    // Relocalization
+    bool systemInitialize()
+    {
+        if (!has_global_map)
+            return false;
+
+        // cout << "has_initial_pose: " << has_initialize_pose << endl;
+        if(!has_initialize_pose)
+        {
+            if (gpsRef.useRef)
+            {
+                RCLCPP_WARN_ONCE(get_logger(), "Waiting for initial pose from GPS. Move at least 1 meter to initialize.");
+                return false;
+            }
+            else
+            {
+                RCLCPP_WARN_ONCE(get_logger(), "Waiting for initilize pose from rviz. Use \"2D Pose Estimate\" on rviz to set the initial pose");
+                return false;
+            }
+        }
+
+        static pcl::IterativeClosestPoint<PointType, PointType> icp;
+        icp.setMaxCorrespondenceDistance(20);
+        icp.setMaximumIterations(100);
+        icp.setTransformationEpsilon(1e-6);
+        icp.setEuclideanFitnessEpsilon(1e-6);
+        icp.setRANSACIterations(0);
+
+        Eigen::Affine3f initialize_affine = trans2Affine3f(initialize_pose);
+
+        // geometry_msgs::msg::TransformStamped transformStamped;
+        // try {
+        //     transformStamped = tf_buffer_->lookupTransform(
+        //         baselinkFrame, lidarFrame,
+        //         tf2::TimePointZero
+        //     );
+        //     double x, y, z, roll, pitch, yaw;
+        //     x = transformStamped.transform.translation.x;
+        //     y = transformStamped.transform.translation.y;
+        //     z = transformStamped.transform.translation.z;
+        //     tf2::Quaternion q(transformStamped.transform.rotation.x, transformStamped.transform.rotation.y, 
+        //         transformStamped.transform.rotation.z, transformStamped.transform.rotation.w);
+        //     tf2::Matrix3x3 qm(q);
+        //     qm.getRPY(roll, pitch, yaw);
+        //     RCLCPP_INFO(get_logger(), "Transform from lidar to baselink: \n\t x: %f\n\t y: %f\n\t z: %f\n\t roll:  %f\n\t pitch: %f\n\t yaw:   %f", 
+        //         x, y, z, roll, pitch, yaw);
+        // }
+        // catch (tf2::TransformException &ex) {
+        //     RCLCPP_WARN(get_logger(), "Could not transform lidar to baselink: %s", ex.what());
+        //     return false;
+        // }
+
+        // Eigen::Isometry3d tf_eigen = tf2::transformToEigen(transformStamped);
+        // Eigen::Affine3f tf_eigen_f = Eigen::Affine3f(tf_eigen.matrix().cast<float>());
+
+        // pcl::PointCloud<PointType>::Ptr laserCloudSurfLastInBaselink(new pcl::PointCloud<PointType>());
+        // pcl::transformPointCloud(*laserCloudSurfLast, *laserCloudSurfLastInBaselink, tf_eigen_f);
+
+        pcl::PointCloud<PointType>::Ptr out_cloud(new pcl::PointCloud<PointType>());
+        pcl::PointCloud<PointType>::Ptr result(new pcl::PointCloud<PointType>());
+        pcl::transformPointCloud(*laserCloudSurfLast, *out_cloud, initialize_affine);
+        // Align clouds
+        icp.setInputSource(out_cloud);
+        icp.setInputTarget(laserCloudSurfFromMapDS);
+        icp.align(*result);
+
+        Eigen::Affine3f correctionLidarFrame;
+        float x, y, z, roll, pitch, yaw;
+        correctionLidarFrame = icp.getFinalTransformation();
+        Eigen::Affine3f tCorrect = correctionLidarFrame * initialize_affine;
+        pcl::getTranslationAndEulerAngles (tCorrect, x, y, z, roll, pitch, yaw);
+
+        transformTobeMapped[0] = roll;
+        transformTobeMapped[1] = pitch;
+        transformTobeMapped[2] = yaw;
+        transformTobeMapped[3] = x;
+        transformTobeMapped[4] = y;
+        transformTobeMapped[5] = z;
+
+        pcl::PointCloud<PointType>::Ptr cloudOut(new pcl::PointCloud<PointType>());
+        PointTypePose thisPose6D = trans2PointTypePose(transformTobeMapped);
+        *cloudOut += *transformPointCloud(laserCloudSurfLast, &thisPose6D);
+        publishCloud(pubRecentKeyFrame, cloudOut, timeLaserInfoStamp, mapFrame);
+        publishCloud(pubCloudRegisteredRaw, cloudOut, timeLaserInfoStamp, mapFrame);
+
+        if (icp.hasConverged() && icp.getFitnessScore() < 0.3)
+        {
+            RCLCPP_INFO(get_logger(), "initialize pose sucessful");
+            system_initialized = true;
+            return true;
+        } 
+        else
+        {
+            RCLCPP_ERROR(get_logger(), "initialize pose failed");
+            has_initialize_pose = false;
+            system_initialized = false;
+            return false;
+        }
+    }
+
     void gpsHandlerOdometry(const nav_msgs::msg::Odometry::SharedPtr gpsMsg)
     {
         RCLCPP_INFO_ONCE(rclcpp::get_logger("mapOptimization"), "Got first GPS message from topic: %s", gpsTopic.c_str());
@@ -297,6 +544,38 @@ public:
             gpsRef.useRef ? "\033[1;32m" : "\033[1;33m", gpsRef.lat, gpsRef.lon, gpsRef.alt);
 
         gpsQueue.push_back(*gpsMsg);
+
+        // Relocalization
+        // if (gpsMsg->pose.pose.position.x == 0 && gpsMsg->pose.pose.position.y == 0 && gpsMsg->pose.pose.position.z == 0) {
+        //     RCLCPP_WARN(rclcpp::get_logger("mapOptimization"), "GPS signal is invalid");
+        //     return;
+        // }
+        // if (useGpsFactor || !has_initialize_pose)
+        //     gpsQueue.push_back(*gpsMsg);
+
+        // if (!has_initialize_pose)
+        // {
+        //     tf2::Quaternion q(gpsMsg->pose.pose.orientation.x, gpsMsg->pose.pose.orientation.y, 
+        //         gpsMsg->pose.pose.orientation.z, gpsMsg->pose.pose.orientation.w);
+        //     tf2::Matrix3x3 qm(q);
+
+        //     double roll, pitch, yaw;
+        //     qm.getRPY(roll, pitch, yaw);
+
+        //     initialize_pose[0] = roll;
+        //     initialize_pose[1] = pitch;
+        //     initialize_pose[2] = yaw;
+
+        //     initialize_pose[3] = gpsMsg->pose.pose.position.x;
+        //     initialize_pose[4] = gpsMsg->pose.pose.position.y;
+        //     initialize_pose[5] = gpsMsg->pose.pose.position.z;
+
+        //     RCLCPP_INFO(get_logger(), "\nGPS initial pose: \n\t x: %f\n\t y: %f\n\t z: %f\n\t roll:  %f\n\t pitch: %f\n\t yaw:   %f", 
+        //         initialize_pose[3], initialize_pose[4], initialize_pose[5], 
+        //         initialize_pose[0], initialize_pose[1], initialize_pose[2]);
+
+        //     has_initialize_pose = true;
+        // }
 
     }
 
@@ -341,6 +620,16 @@ public:
         gps_odom.pose.pose.orientation = quat_msg;
         pubGpsOdom->publish(gps_odom);
         gpsQueue.push_back(gps_odom);
+
+        // Relocalization
+
+        // if (useGpsFactor || !has_initialize_pose)
+        //     gpsQueue.push_back(gps_odom);
+        
+        // if (!has_initialize_pose)
+        // {
+        //     initialposeHandlerGps();
+        // }
     }
 
     void pointAssociateToMap(PointType const * const pi, PointType * const po)
@@ -1578,7 +1867,8 @@ public:
 
         if (laserCloudSurfLastDSNum > 30)
         {
-            kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMapDS);
+            if (graphType == GraphType::SLAM)
+                kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMapDS);
 
             for (int iterCount = 0; iterCount < 30; iterCount++)
             {
@@ -1769,7 +2059,7 @@ public:
             int indexFrom = loopIndexQueue[i].first;
             int indexTo = loopIndexQueue[i].second;
             gtsam::Pose3 poseBetween = loopPoseQueue[i];
-            // gtsam::noiseModel::Diagonal::shared_ptr noiseBetween = loopNoiseQueue[i];
+            // gtsam::noiseModel::Diagonal::shared_ptr noiseBetween = loopNoiseQueue[i]; // Relocalization?
             auto noiseBetween = loopNoiseQueue[i];
             gtSAMgraph.add(BetweenFactor<Pose3>(X(indexFrom), X(indexTo), poseBetween, noiseBetween));
         }
@@ -1789,7 +2079,10 @@ public:
         addOdomFactor();
 
         // gps factor
-        addGPSFactor();
+        if (graphType == GraphType::SLAM)
+        {
+            addGPSFactor(); // TODO: How do I want to use gps for relocalization?
+        }
 
         // loop factor
         addLoopFactor();
@@ -1839,15 +2132,15 @@ public:
         thisPose6D.time = timeLaserInfoCur;
         cloudKeyPoses6D->push_back(thisPose6D);
 
-        cout << "****************************************************" << endl;
+        // cout << "****************************************************" << endl;
         poseCovariance = isam->marginalCovariance(X(isamCurrentEstimate.size()-1));
         keyPoseCovariance.push_back(poseCovariance);
         double tmpTransConfidence, tmpRotConfidence;
-        getCovConfidence6x6(keyPoseCovariance.back(), tmpTransConfidence, tmpRotConfidence, true);
+        getCovConfidence6x6(keyPoseCovariance.back(), tmpTransConfidence, tmpRotConfidence, false);
         keyTransConfidence.push_back(tmpTransConfidence);
         keyRotConfidence.push_back(tmpRotConfidence);
         // cout << "Pose covariance:" << endl;
-        cout << poseCovariance << endl;
+        // cout << poseCovariance << endl;
         cout << "Trans confidence:" << keyTransConfidence.back() << ", Rot confidence: " << keyRotConfidence.back() << endl << endl;
 
         if (isamCurrentEstimate.size() != keyPoseCovariance.size())
