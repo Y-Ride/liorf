@@ -1,5 +1,16 @@
 #include "Scancontext.h"
 
+using namespace Eigen;
+using namespace nanoflann;
+
+using std::cout;
+using std::endl;
+using std::make_pair;
+
+using std::atan2;
+using std::cos;
+using std::sin;
+
 // namespace SC2
 // {
 
@@ -275,8 +286,8 @@ std::pair<int, float> SCManager::detectLoopClosureID ( void )
         polarcontext_invkeys_to_search_.assign( polarcontext_invkeys_mat_.begin(), polarcontext_invkeys_mat_.end() - NUM_EXCLUDE_RECENT ) ;
 
         polarcontext_tree_.reset(); 
-        polarcontext_tree_ = std::make_unique<InvKeyTree>(PC_NUM_RING /* dim */, polarcontext_invkeys_to_search_, 10 /* max leaf */ );
-        // tree_ptr_->index->buildIndex(); // inernally called in the constructor of InvKeyTree (for detail, refer the nanoflann and KDtreeVectorOfVectorsAdaptor)
+        polarcontext_tree_ = std::make_unique<SCInvKeyTree>(PC_NUM_RING /* dim */, polarcontext_invkeys_to_search_, 10 /* max leaf */ );
+        // tree_ptr_->index->buildIndex(); // inernally called in the constructor of SCInvKeyTree (for detail, refer the nanoflann and KDtreeVectorOfVectorsAdaptor)
         t_tree_construction.toc("Tree construction");
     }
     tree_making_period_conter = tree_making_period_conter + 1;

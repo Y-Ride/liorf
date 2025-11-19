@@ -27,20 +27,9 @@
 
 #include "tictoc.h"
 
-using namespace Eigen;
-using namespace nanoflann;
-
-using std::cout;
-using std::endl;
-using std::make_pair;
-
-using std::atan2;
-using std::cos;
-using std::sin;
-
 using SCPointType = pcl::PointXYZI; // using xyz only. but a user can exchange the original bin encoding function (i.e., max hegiht) to max intensity (for detail, refer 20 ICRA Intensity Scan Context)
-using KeyMat = std::vector<std::vector<float> >;
-using InvKeyTree = KDTreeVectorOfVectorsAdaptor< KeyMat, float >;
+using SCKeyMat = std::vector<std::vector<float> >;
+using SCInvKeyTree = KDTreeVectorOfVectorsAdaptor< SCKeyMat, float >;
 
 
 // namespace SC2
@@ -51,8 +40,8 @@ void coreImportTest ( void );
 
 // sc param-independent helper functions 
 float xy2theta( const float & _x, const float & _y );
-MatrixXd circshift( MatrixXd &_mat, int _num_shift );
-std::vector<float> eig2stdvec( MatrixXd _eigmat );
+Eigen::MatrixXd circshift( Eigen::MatrixXd &_mat, int _num_shift );
+std::vector<float> eig2stdvec( Eigen::MatrixXd _eigmat );
 
 
 class SCManager
@@ -64,9 +53,9 @@ public:
     Eigen::MatrixXd makeRingkeyFromScancontext( Eigen::MatrixXd &_desc );
     Eigen::MatrixXd makeSectorkeyFromScancontext( Eigen::MatrixXd &_desc );
 
-    int fastAlignUsingVkey ( MatrixXd & _vkey1, MatrixXd & _vkey2 ); 
-    double distDirectSC ( MatrixXd &_sc1, MatrixXd &_sc2 ); // "d" (eq 5) in the original paper (IROS 18)
-    std::pair<double, int> distanceBtnScanContext ( MatrixXd &_sc1, MatrixXd &_sc2 ); // "D" (eq 6) in the original paper (IROS 18)
+    int fastAlignUsingVkey ( Eigen::MatrixXd & _vkey1, Eigen::MatrixXd & _vkey2 ); 
+    double distDirectSC ( Eigen::MatrixXd &_sc1, Eigen::MatrixXd &_sc2 ); // "d" (eq 5) in the original paper (IROS 18)
+    std::pair<double, int> distanceBtnScanContext ( Eigen::MatrixXd &_sc1, Eigen::MatrixXd &_sc2 ); // "D" (eq 6) in the original paper (IROS 18)
 
     // User-side API
     void makeAndSaveScancontextAndKeys( pcl::PointCloud<SCPointType> & _scan_down );
@@ -105,9 +94,9 @@ public:
     std::vector<Eigen::MatrixXd> polarcontext_invkeys_;
     std::vector<Eigen::MatrixXd> polarcontext_vkeys_;
 
-    KeyMat polarcontext_invkeys_mat_;
-    KeyMat polarcontext_invkeys_to_search_;
-    std::unique_ptr<InvKeyTree> polarcontext_tree_;
+    SCKeyMat polarcontext_invkeys_mat_;
+    SCKeyMat polarcontext_invkeys_to_search_;
+    std::unique_ptr<SCInvKeyTree> polarcontext_tree_;
 
 }; // SCManager
 

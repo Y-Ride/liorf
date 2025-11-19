@@ -178,8 +178,7 @@ Visualization Manager:
           Enabled: true
           Name: LoopClosure
           Namespaces:
-            loop_edges: true
-            loop_nodes: true
+            {}
           Topic:
             Depth: 5
             Durability Policy: Volatile
@@ -300,25 +299,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 708.917236328125
+      Distance: 476.15045166015625
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -128.9599151611328
-        Y: -184.56625366210938
-        Z: -4.909932613372803
+        X: -9.323562622070312
+        Y: -0.4397127330303192
+        Z: -3.506342887878418
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.0697968006134033
+      Pitch: 1.5697963237762451
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 1.6022087335586548
+      Yaw: 1.61720871925354
     Saved: ~
 Window Geometry:
   Displays:

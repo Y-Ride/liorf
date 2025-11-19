@@ -181,6 +181,10 @@ public:
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
+    std::vector<double> total_time;
+    std::vector<double> reg_time;
+    std::vector<double> opt_time;
+
     mapOptimization(const rclcpp::NodeOptions & options) : ParamServer("liorf_mapOptimization", options)
     {
         RCLCPP_INFO_ONCE(this->get_logger(), "Save BM: %d GM: %d; Debug: %d; Width: %d", blockMapParam.save, blockMapParam.saveGlobal, blockMapParam.debug, blockMapParam.width);
@@ -419,6 +423,8 @@ public:
                 }
             }
 
+            TicToc time;
+
             updateInitialGuess();
 
             extractSurroundingKeyFrames();
@@ -427,9 +433,18 @@ public:
 
             scan2MapOptimization();
 
+            double t1 = time.toc("1");
+            reg_time.push_back(t1);
+
             saveKeyFramesAndFactor();
 
             correctPoses();
+
+            double t2 = time.toc("2");
+
+            opt_time.push_back(t2 - t1);
+
+            total_time.push_back(t2);
 
             publishOdometry();
 
@@ -891,6 +906,27 @@ public:
       pcl::io::savePCDFileBinary(saveMapDirectory + "/trajectory.pcd", *cloudKeyPoses3D);
       pcl::io::savePCDFileBinary(saveMapDirectory + "/transformations.pcd", *cloudKeyPoses6D);
       // extract global point cloud map
+
+      std::fstream totalTime(saveMapDirectory + "/total_time.txt", std::fstream::out);
+      totalTime.precision(5);
+      for (auto t : total_time) {
+          totalTime << t << std::endl;
+      }
+      totalTime.close();
+  
+      std::fstream regTime(saveMapDirectory + "/reg_time.txt", std::fstream::out);
+      regTime.precision(5);
+      for (auto t : reg_time) {
+          regTime << t << std::endl;
+      }
+      regTime.close();
+  
+      std::fstream optTime(saveMapDirectory + "/opt_time.txt", std::fstream::out);
+      optTime.precision(5);
+      for (auto t : opt_time) {
+          optTime << t << std::endl;
+      }
+      optTime.close();
 
       pcl::PointCloud<PointType>::Ptr globalSurfCloud(new pcl::PointCloud<PointType>());
       pcl::PointCloud<PointType>::Ptr globalSurfCloudDS(new pcl::PointCloud<PointType>());
@@ -2409,6 +2445,59 @@ public:
             }
         }
     }
+
+    void drawLinePlot(const std::vector<double>& vec1, const std::vector<double>& vec2, const std::vector<double>& vec3, const std::string& windowName) {
+        int maxLen = std::max({vec1.size(), vec2.size(), vec3.size()});
+
+        double width = 800, height = 600;
+        cv::Mat plotImg(height, width, CV_8UC3, cv::Scalar(255, 255, 255));
+
+        double margin = 50;
+        double maxVal = 200;
+
+        cv::line(plotImg, cv::Point(margin, height - margin), cv::Point(width - margin, height - margin), cv::Scalar(0, 0, 0), 2);
+        cv::line(plotImg, cv::Point(margin, margin), cv::Point(margin, height - margin), cv::Scalar(0, 0, 0), 2);
+
+        cv::putText(plotImg, "Index", cv::Point(width / 2, height - 10), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 0, 0), 2);
+        cv::putText(plotImg, "ms", cv::Point(10, margin / 2), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 0, 0), 2);
+
+        for (int i = 0; i <= maxVal; i += 10) {
+            double y = height - margin - (i * (height - 2 * margin) / maxVal);
+            cv::line(plotImg, cv::Point(margin, y), cv::Point(width - margin, y), cv::Scalar(200, 200, 200), 1);
+            cv::putText(plotImg, std::to_string(i), cv::Point(10, y), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 0, 0), 1);
+        }
+
+        auto drawLine = [&](const std::vector<double>& vec, const cv::Scalar& color, const std::string& label, int labelPos) {
+            for (size_t i = 1; i < vec.size(); ++i) {
+                double x1 = margin + (i - 1) * (width - 2 * margin) / maxLen;
+                double y1 = height - margin - (vec[i - 1] * (height - 2 * margin) / maxVal);
+                double x2 = margin + i * (width - 2 * margin) / maxLen;
+                double y2 = height - margin - (vec[i] * (height - 2 * margin) / maxVal);
+                cv::line(plotImg, cv::Point(x1, y1), cv::Point(x2, y2), color, 2);
+            }
+
+            cv::putText(plotImg, label, cv::Point(width - margin + 10, labelPos), cv::FONT_HERSHEY_SIMPLEX, 0.6, color, 2);
+        };
+
+        drawLine(vec1, cv::Scalar(255, 0, 0), "Total Time", 100);
+        drawLine(vec2, cv::Scalar(0, 255, 0), "LM Time", 130);
+        drawLine(vec3, cv::Scalar(0, 0, 255), "FGO Time", 160);
+
+        cv::imshow(windowName, plotImg);            
+        cv::waitKey(1);
+    }
+
+    void displayTime() {
+        cv::namedWindow("Liorf Processing Times", cv::WINDOW_AUTOSIZE);
+
+        rclcpp::Rate rate(1);
+        while (rclcpp::ok()) {
+            rate.sleep();
+
+            drawLinePlot(total_time, reg_time, opt_time, "Liorf Processing Times");
+        }
+
+    }
 };
 
 
@@ -2427,6 +2516,7 @@ int main(int argc, char** argv)
 
     std::thread loopthread(&mapOptimization::loopClosureThread, MO);
     std::thread visualizeMapThread(&mapOptimization::visualizeGlobalMapThread, MO);
+    // std::thread visualizeTimeThread(&mapOptimization::displayTime, MO);
 
     exec.spin();
 
@@ -2434,6 +2524,7 @@ int main(int argc, char** argv)
 
     loopthread.join();
     visualizeMapThread.join();
+    // visualizeTimeThread.join();
 
     return 0;
 }
